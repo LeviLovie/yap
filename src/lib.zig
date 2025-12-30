@@ -9,9 +9,15 @@ pub const Literal = @import("token.zig").Literal;
 pub const Op = @import("op.zig").Op;
 pub const Span = @import("span.zig").Span;
 pub const Token = @import("token.zig").Token;
-pub const parser = @import("parser.zig");
+pub const codec = @import("codec.zig");
 pub const lexer = @import("lexer.zig");
+pub const parser = @import("parser.zig");
 pub const runtime = @import("runtime.zig");
+
+pub const BuildResult = union(enum) {
+    Ok,
+    Err: CompileError,
+};
 
 pub fn compile(
     allocator: std.mem.Allocator,
@@ -28,6 +34,36 @@ pub fn run(
 ) !void {
     const writer = std.io.getStdOut().writer();
     try runWithWriter(allocator, writer, ir);
+}
+
+pub fn compileToFile(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    writer: anytype,
+) BuildResult {
+    const result = compile(allocator, source);
+    switch (result) {
+        .Ok => |ir| {
+            defer ir.deinit();
+            ir.serialize(writer) catch return .{ .Err = .Internal };
+            return .Ok;
+        },
+        .Err => |err| return .{ .Err = err },
+    }
+}
+
+pub fn runFromFile(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    writer: anytype,
+) !void {
+    var ir = try Ir.deserialize(allocator, reader);
+    defer ir.deinitDeep();
+
+    var rt = runtime.Runtime.init(allocator);
+    defer rt.deinit();
+
+    try rt.exec(writer, ir.ops);
 }
 
 pub fn runWithWriter(
