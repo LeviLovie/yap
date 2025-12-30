@@ -26,14 +26,14 @@ pub const Runtime = struct {
         for (instrs) |inst| {
             switch (inst) {
                 .Assign => |a| {
-                    try self.vars.put(a.name, a.value);
+                    try self.vars.put(a.name, a.value.name);
                 },
 
                 .Yap => |y| {
-                    if (self.vars.get(y.value)) |val| {
+                    if (self.vars.get(y.value.name)) |val| {
                         std.debug.print("{s}\n", .{val});
                     } else {
-                        std.debug.print("undefined variable: {s}\n", .{y.value});
+                        std.debug.print("undefined variable: {s}\n", .{y.value.name});
                         return error.RuntimeError;
                     }
                 },

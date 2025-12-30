@@ -47,6 +47,12 @@ pub fn main() !void {
                     printExpectation(exp);
                 }
             },
+            .Lex => |l| {
+                std.debug.print(
+                    "lex error at {d}:{d}: invalid character '{c}'\n",
+                    .{ l.span.line, l.span.column, l.ch },
+                );
+            },
 
             .OutOfMemory => std.debug.print("error: out of memory\n", .{}),
             .Internal => {

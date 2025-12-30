@@ -1,6 +1,16 @@
+const Span = @import("span.zig").Span;
+
+pub const Identifier = struct {
+    name: []const u8,
+    span: Span,
+};
+
 pub const Token = union(enum) {
-    be,
-    identifier: []const u8,
-    throw: []const u8,
-    yap,
+    identifier: Identifier,
+    yap: Span,
+    be: Span,
+    throw: struct {
+        message: []const u8,
+        span: Span,
+    },
 };

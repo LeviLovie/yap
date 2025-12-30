@@ -1,4 +1,5 @@
 const std = @import("std");
+const Identifier = @import("token.zig").Identifier;
 const Token = @import("token.zig").Token;
 const Op = @import("op.zig").Op;
 
@@ -63,7 +64,7 @@ pub const Parser = struct {
         }
     }
 
-    fn expectIdentifier(self: *Parser) ![]const u8 {
+    fn expectIdentifier(self: *Parser) !Identifier {
         const tok = self.next() orelse {
             self.lastExpectation = .Identifier;
             self.errorIndex = self.index;
@@ -71,7 +72,7 @@ pub const Parser = struct {
         };
 
         return switch (tok) {
-            .identifier => |name| name,
+            .identifier => |id| id,
             else => {
                 self.lastExpectation = .Identifier;
                 self.errorIndex = self.index - 1;
@@ -109,7 +110,7 @@ pub const Parser = struct {
 
                     try ops.append(.{
                         .Assign = .{
-                            .name = tok.identifier,
+                            .name = tok.identifier.name,
                             .value = value,
                         },
                     });
@@ -126,9 +127,9 @@ pub const Parser = struct {
                 },
 
                 // throw MSG
-                .throw => |msg| {
+                .throw => |t| {
                     try ops.append(.{
-                        .Throw = .{ .message = msg },
+                        .Throw = .{ .message = t.message },
                     });
                 },
 
