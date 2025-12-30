@@ -122,7 +122,7 @@ pub const Parser = struct {
 
             switch (tok) {
                 // VAR be VALUE
-                .identifier => {
+                .identifier => |identifier| {
                     self.lastExpectation = .{ .Pattern = "VAR be VALUE" };
                     try self.expect(.be);
                     const value = try self.expectValue();
@@ -131,24 +131,31 @@ pub const Parser = struct {
                         .Assign = .{
                             .name = tok.identifier.name,
                             .value = value,
+                            .span = identifier.span,
                         },
                     });
                 },
 
                 // yap VAR
-                .yap => {
+                .yap => |span| {
                     self.lastExpectation = .{ .Pattern = "yap VALUE" };
                     const value = try self.expectValue();
 
                     try ops.append(.{
-                        .Yap = .{ .value = value },
+                        .Yap = .{
+                            .value = value,
+                            .span = span,
+                        },
                     });
                 },
 
                 // throw MSG
-                .throw => |t| {
+                .throw => |throw| {
                     try ops.append(.{
-                        .Throw = .{ .message = t.message },
+                        .Throw = .{
+                            .message = throw.message,
+                            .span = throw.span,
+                        },
                     });
                 },
 

@@ -26,38 +26,20 @@ pub fn main() !void {
     };
     defer allocator.free(source);
 
-    const compile_result = yap.compile(allocator, source);
+    const result = yap.compile(allocator, source);
 
-    switch (compile_result) {
+    switch (result) {
         .Ok => |ir| {
             defer ir.deinit();
-            yap.run(allocator, ir) catch |err| {
+            if (yap.run(allocator, ir)) |_| {} else |err| {
                 std.debug.print("runtime error: {}\n", .{err});
-            };
+            }
         },
 
-        .Err => |err| switch (err) {
-            .Parse => |p| {
-                std.debug.print(
-                    "parse error at token {d}\n",
-                    .{p.index},
-                );
-
-                if (p.expectation) |exp| {
-                    printExpectation(exp);
-                }
-            },
-            .Lex => |l| {
-                std.debug.print(
-                    "lex error at {d}:{d}: invalid character '{c}'\n",
-                    .{ l.span.line, l.span.column, l.ch },
-                );
-            },
-
-            .OutOfMemory => std.debug.print("error: out of memory\n", .{}),
-            .Internal => {
-                std.debug.print("internal compiler error\n", .{});
-            },
+        .Err => |err| {
+            const msg = try yap.formatCompileError(allocator, err);
+            defer allocator.free(msg);
+            std.debug.print("{s}", .{msg});
         },
     }
 }

@@ -13,7 +13,9 @@ pub const Runtime = struct {
     allocator: std.mem.Allocator,
     vars: std.StringHashMap(Value),
 
-    pub fn init(allocator: std.mem.Allocator) Runtime {
+    pub fn init(
+        allocator: std.mem.Allocator,
+    ) Runtime {
         return Runtime{
             .allocator = allocator,
             .vars = std.StringHashMap(Value).init(allocator),
@@ -22,6 +24,24 @@ pub const Runtime = struct {
 
     pub fn deinit(self: *Runtime) void {
         self.vars.deinit();
+    }
+
+    pub fn exec(self: *Runtime, writer: anytype, ops: []const Op) !void {
+        for (ops) |op| switch (op) {
+            .Assign => |a| {
+                try self.vars.put(a.name, a.value);
+            },
+
+            .Yap => |y| {
+                const lit = try self.resolve(writer, y.value);
+                printLiteral(writer, lit);
+            },
+
+            .Throw => |t| {
+                writer.print("Error: {s}\n", .{t.message}) catch {};
+                return error.RuntimeError;
+            },
+        };
     }
 
     fn evalValue(self: *Runtime, value: Value) ![]const u8 {
@@ -40,45 +60,28 @@ pub const Runtime = struct {
         };
     }
 
-    fn printLiteral(lit: Literal) void {
+    fn printLiteral(writer: anytype, lit: Literal) void {
         switch (lit) {
-            .number => |n| std.debug.print("{d}\n", .{n.value}),
-            .string => |s| std.debug.print("{s}\n", .{s.value}),
+            .number => |n| {
+                writer.print("{d}\n", .{n.value}) catch {};
+            },
+            .string => |s| {
+                writer.print("{s}\n", .{s.value}) catch {};
+            },
         }
     }
 
-    fn resolve(self: *Runtime, v: Value) !Literal {
+    fn resolve(self: *Runtime, writer: anytype, v: Value) !Literal {
         return switch (v) {
             .literal => |lit| lit,
 
             .identifier => |id| blk: {
                 const stored = self.vars.get(id.name) orelse {
-                    std.debug.print(
-                        "undefined variable: {s}\n",
-                        .{id.name},
-                    );
+                    writer.print("undefined variable: {s}\n", .{id.name}) catch {};
                     return error.RuntimeError;
                 };
 
-                break :blk try self.resolve(stored);
-            },
-        };
-    }
-
-    pub fn exec(self: *Runtime, ops: []const Op) !void {
-        for (ops) |op| switch (op) {
-            .Assign => |a| {
-                try self.vars.put(a.name, a.value);
-            },
-
-            .Yap => |y| {
-                const lit = try self.resolve(y.value);
-                printLiteral(lit);
-            },
-
-            .Throw => |t| {
-                std.debug.print("Error: {s}\n", .{t.message});
-                return error.RuntimeError;
+                break :blk try self.resolve(writer, stored);
             },
         };
     }
