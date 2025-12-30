@@ -4,6 +4,7 @@ const Span = @import("span.zig").Span;
 
 pub const LexError = error{
     InvalidCharacter,
+    UnterminatedString,
 };
 
 pub const Lexer = struct {
@@ -35,49 +36,103 @@ pub const Lexer = struct {
             self.skipWhitespace();
             if (self.eof()) break;
 
-            const start = self.mark();
-
-            const word = self.readWord();
-            const span = self.makeSpan(start);
-
-            if (word.len == 0) {
-                const bad_mark = self.mark();
-                const bad_char = self.peek().?;
-                self.advance();
-
-                self.last_error_char = bad_char;
-                self.last_error_span = self.makeSpan(bad_mark);
-
-                return error.InvalidCharacter;
-            }
-
-            if (std.mem.eql(u8, word, "be")) {
-                try tokens.append(.{ .be = span });
-            } else if (std.mem.eql(u8, word, "yap")) {
-                try tokens.append(.{ .yap = span });
-            } else if (std.mem.eql(u8, word, "throw")) {
-                self.skipWhitespace();
-                const msg_start = self.mark();
-                const msg = self.readLine();
-                const msg_span = self.makeSpan(msg_start);
-
-                try tokens.append(.{
-                    .throw = .{
-                        .message = msg,
-                        .span = msg_span,
-                    },
-                });
+            const c = self.peek().?;
+            if (c == '"') {
+                try tokens.append(try self.lexString());
+            } else if (std.ascii.isDigit(c)) {
+                try tokens.append(try self.lexNumber());
+            } else if (std.ascii.isAlphabetic(c) or c == '_') {
+                try tokens.append(try self.lexWordOrKeyword());
             } else {
-                try tokens.append(.{
-                    .identifier = .{
-                        .name = word,
-                        .span = span,
-                    },
-                });
+                const m = self.mark();
+                self.last_error_char = c;
+                self.advance();
+                self.last_error_span = self.makeSpan(m);
+                return error.InvalidCharacter;
             }
         }
 
         return tokens;
+    }
+
+    fn lexString(self: *Lexer) !Token {
+        const start = self.mark();
+        self.advance();
+
+        const value_start = self.index;
+
+        while (!self.eof()) {
+            const c = self.peek().?;
+            if (c == '"') break;
+            self.advance();
+        }
+
+        if (self.eof()) {
+            self.last_error_span = self.makeSpan(start);
+            return error.UnterminatedString;
+        }
+
+        const value = self.input[value_start..self.index];
+        self.advance();
+
+        return .{
+            .literal = .{
+                .string = .{
+                    .value = value,
+                    .span = self.makeSpan(start),
+                },
+            },
+        };
+    }
+
+    fn lexNumber(self: *Lexer) !Token {
+        const start = self.mark(); const slice = self.readNumber();
+
+        const value = std.fmt.parseFloat(f64, slice) catch {
+            self.last_error_span = self.makeSpan(start);
+            return error.InvalidCharacter;
+        };
+
+        return .{
+            .literal = .{
+                .number = .{
+                    .value = value,
+                    .span = self.makeSpan(start),
+                },
+            },
+        };
+    }
+
+    fn lexWordOrKeyword(self: *Lexer) !Token {
+        const start = self.mark();
+        const word = self.readWord();
+        const span = self.makeSpan(start);
+
+        if (std.mem.eql(u8, word, "be")) {
+            return .{ .be = span };
+        }
+        if (std.mem.eql(u8, word, "yap")) {
+            return .{ .yap = span };
+        }
+        if (std.mem.eql(u8, word, "throw")) {
+            self.skipWhitespace();
+            const msg_start = self.mark();
+            const msg = self.readLine();
+
+            return .{
+                .throw = .{
+                    .message = msg,
+                    .span = self.makeSpan(msg_start),
+                },
+            };
+        }
+
+        return .{
+            .identifier = .{
+                .name = word,
+                .span = span,
+            },
+        };
     }
 
     fn eof(self: *Lexer) bool {
@@ -135,6 +190,26 @@ pub const Lexer = struct {
                 break;
             }
         }
+        return self.input[start..self.index];
+    }
+
+    fn readNumber(self: *Lexer) []const u8 {
+        const start = self.index;
+        var seen_dot = false;
+
+        while (!self.eof()) {
+            const c = self.peek().?;
+
+            if (std.ascii.isDigit(c)) {
+                self.advance();
+            } else if (c == '.' and !seen_dot) {
+                seen_dot = true;
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
         return self.input[start..self.index];
     }
 

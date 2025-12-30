@@ -1,6 +1,8 @@
 const std = @import("std");
-const Token = @import("token.zig").Token;
 const Op = @import("op.zig").Op;
+const Token = @import("token.zig").Token;
+const Value = @import("op.zig").Value;
+const Literal = @import("token.zig").Literal;
 
 pub const RuntimeError = error{
     RuntimeError,
@@ -9,12 +11,12 @@ pub const RuntimeError = error{
 
 pub const Runtime = struct {
     allocator: std.mem.Allocator,
-    vars: std.StringHashMap([]const u8),
+    vars: std.StringHashMap(Value),
 
     pub fn init(allocator: std.mem.Allocator) Runtime {
         return Runtime{
             .allocator = allocator,
-            .vars = std.StringHashMap([]const u8).init(allocator),
+            .vars = std.StringHashMap(Value).init(allocator),
         };
     }
 
@@ -22,27 +24,62 @@ pub const Runtime = struct {
         self.vars.deinit();
     }
 
-    pub fn exec(self: *Runtime, instrs: []const Op) !void {
-        for (instrs) |inst| {
-            switch (inst) {
-                .Assign => |a| {
-                    try self.vars.put(a.name, a.value.name);
+    fn evalValue(self: *Runtime, value: Value) ![]const u8 {
+        return switch (value) {
+            .literal => |lit| switch (lit) {
+                .string => |s| s.value,
+                .number => |n| blk: {
+                    break :blk try std.fmt.allocPrint(self.allocator, "{d}", .{n.value});
                 },
+            },
+            .identifier => |id| {
+                if (self.vars.get(id.name)) |val| return val;
+                std.debug.print("undefined variable: {s}\n", .{id.name});
+                return error.RuntimeError;
+            },
+        };
+    }
 
-                .Yap => |y| {
-                    if (self.vars.get(y.value.name)) |val| {
-                        std.debug.print("{s}\n", .{val});
-                    } else {
-                        std.debug.print("undefined variable: {s}\n", .{y.value.name});
-                        return error.RuntimeError;
-                    }
-                },
-
-                .Throw => |t| {
-                    std.debug.print("Error: {s}\n", .{t.message});
-                    return error.RuntimeError;
-                }
-            }
+    fn printLiteral(lit: Literal) void {
+        switch (lit) {
+            .number => |n| std.debug.print("{d}\n", .{n.value}),
+            .string => |s| std.debug.print("{s}\n", .{s.value}),
         }
+    }
+
+    fn resolve(self: *Runtime, v: Value) !Literal {
+        return switch (v) {
+            .literal => |lit| lit,
+
+            .identifier => |id| blk: {
+                const stored = self.vars.get(id.name) orelse {
+                    std.debug.print(
+                        "undefined variable: {s}\n",
+                        .{id.name},
+                    );
+                    return error.RuntimeError;
+                };
+
+                break :blk try self.resolve(stored);
+            },
+        };
+    }
+
+    pub fn exec(self: *Runtime, ops: []const Op) !void {
+        for (ops) |op| switch (op) {
+            .Assign => |a| {
+                try self.vars.put(a.name, a.value);
+            },
+
+            .Yap => |y| {
+                const lit = try self.resolve(y.value);
+                printLiteral(lit);
+            },
+
+            .Throw => |t| {
+                std.debug.print("Error: {s}\n", .{t.message});
+                return error.RuntimeError;
+            },
+        };
     }
 };

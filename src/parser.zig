@@ -1,7 +1,8 @@
 const std = @import("std");
 const Identifier = @import("token.zig").Identifier;
-const Token = @import("token.zig").Token;
 const Op = @import("op.zig").Op;
+const Token = @import("token.zig").Token;
+const Value = @import("op.zig").Value;
 
 pub const ParseError = error{
     UnexpectedToken,
@@ -81,6 +82,24 @@ pub const Parser = struct {
         };
     }
 
+    fn expectValue(self: *Parser) !Value {
+        const tok = self.next() orelse {
+            self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
+            self.errorIndex = self.index;
+            return error.UnexpectedEof;
+        };
+
+        return switch (tok) {
+            .identifier => |id| .{ .identifier = id },
+            .literal => |lit| .{ .literal = lit },
+            else => {
+                self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
+                self.errorIndex = self.index - 1;
+                return error.UnexpectedToken;
+            },
+        };
+    }
+
     pub fn formatError(self: *Parser, writer: anytype) !void {
         try writer.print("parse error at token {d}\n", .{self.errorIndex});
 
@@ -106,7 +125,7 @@ pub const Parser = struct {
                 .identifier => {
                     self.lastExpectation = .{ .Pattern = "VAR be VALUE" };
                     try self.expect(.be);
-                    const value = try self.expectIdentifier();
+                    const value = try self.expectValue();
 
                     try ops.append(.{
                         .Assign = .{
@@ -118,8 +137,8 @@ pub const Parser = struct {
 
                 // yap VAR
                 .yap => {
-                    self.lastExpectation = .{ .Pattern = "yap VAR" };
-                    const value = try self.expectIdentifier();
+                    self.lastExpectation = .{ .Pattern = "yap VALUE" };
+                    const value = try self.expectValue();
 
                     try ops.append(.{
                         .Yap = .{ .value = value },

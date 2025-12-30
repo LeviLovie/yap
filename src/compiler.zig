@@ -50,6 +50,14 @@ pub const Compiler = struct {
                     },
                 },
             },
+            error.UnterminatedString => return .{
+                .Err = .{
+                    .Lex = .{
+                        .span = lx.last_error_span orelse Span{ .start = 0, .end = 0, .line = 1, .column = 1 },
+                        .ch = '"',
+                    },
+                },
+            },
         };
         defer tokens.deinit();
 

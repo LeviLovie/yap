@@ -5,6 +5,7 @@ pub const CompileResult = @import("compiler.zig").CompileResult;
 pub const Compiler = @import("compiler.zig").Compiler;
 pub const Identifier = @import("token.zig").Identifier;
 pub const Ir = @import("ir.zig").Ir;
+pub const Literal = @import("token.zig").Literal;
 pub const Op = @import("op.zig").Op;
 pub const Span = @import("span.zig").Span;
 pub const Token = @import("token.zig").Token;
