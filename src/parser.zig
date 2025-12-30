@@ -2,69 +2,140 @@ const std = @import("std");
 const Token = @import("token.zig").Token;
 const Op = @import("op.zig").Op;
 
-pub fn parse(
+pub const ParseError = error{
+    UnexpectedToken,
+    UnexpectedEof,
+};
+
+pub const Expectation = union(enum) {
+    Identifier,
+    Token: std.meta.Tag(Token),
+    Pattern: []const u8,
+};
+
+pub const Parser = struct {
     allocator: std.mem.Allocator,
     tokens: []const Token,
-) !std.ArrayList(Op) {
-    var instrs = std.ArrayList(Op).init(allocator);
+    index: usize,
 
-    var i: usize = 0;
-    while (i < tokens.len) {
-        switch (tokens[i]) {
-            // VAR be VALUE
-            .identifier => |name| {
-                if (i + 2 >= tokens.len) return error.SyntaxError;
-                if (tokens[i + 1] != .be) return error.SyntaxError;
+    lastExpectation: ?Expectation = null,
+    errorIndex: usize = 0,
 
-                const value = switch (tokens[i + 2]) {
-                    .identifier => |v| v,
-                    else => return error.SyntaxError,
-                };
+    pub fn init(
+        allocator: std.mem.Allocator,
+        tokens: []const Token,
+    ) Parser {
+        return Parser{
+            .allocator = allocator,
+            .tokens = tokens,
+            .index = 0,
+        };
+    }
 
-                try instrs.append(.{
-                    .Assign = .{
-                        .name = name,
-                        .value = value,
-                    },
-                });
+    fn has(self: *Parser, n: usize) bool {
+        return self.index + n <= self.tokens.len;
+    }
 
-                i += 3;
-            },
-            // yap VALUE
-            .yap => {
-                if (i + 1 >= tokens.len) return error.SyntaxError;
+    fn peek(self: *Parser) ?Token {
+        if (self.index >= self.tokens.len) return null;
+        return self.tokens[self.index];
+    }
 
-                const value = switch (tokens[i + 1]) {
-                    .identifier => |v| v,
-                    else => return error.SyntaxError,
-                };
+    fn next(self: *Parser) ?Token {
+        if (!self.has(1)) return null;
+        const token = self.tokens[self.index];
+        self.index += 1;
+        return token;
+    }
 
-                try instrs.append(.{
-                    .Yap = .{ .value = value },
-                });
+    fn expect(self: *Parser, expected: std.meta.Tag(Token)) !void {
+        const tok = self.next() orelse {
 
-                i += 2;
-            },
+            self.lastExpectation = .{ .Token = expected };
+            self.errorIndex = self.index;
+            return error.UnexpectedEof;
+        };
 
-            // throw MESSAGE
-            .throw => {
-                if (i + 1 >= tokens.len) return error.SyntaxError;
-
-                const message = switch (tokens[i + 1]) {
-                    .identifier => |msg| msg,
-                    else => return error.SyntaxError,
-                };
-
-                try instrs.append(.{
-                    .Throw = .{ .message = message },
-                });
-
-                return instrs;
-            },
-
-            else => return error.SyntaxError,
+        if (std.meta.activeTag(tok) != expected) {
+            self.lastExpectation = .{ .Token = expected };
+            self.errorIndex = self.index - 1;
+            return error.UnexpectedToken;
         }
     }
 
-    return instrs;
-}
+    fn expectIdentifier(self: *Parser) ![]const u8 {
+        const tok = self.next() orelse {
+            self.lastExpectation = .Identifier;
+            self.errorIndex = self.index;
+            return error.UnexpectedEof;
+        };
+
+        return switch (tok) {
+            .identifier => |name| name,
+            else => {
+                self.lastExpectation = .Identifier;
+                self.errorIndex = self.index - 1;
+                return error.UnexpectedToken;
+            },
+        };
+    }
+
+    pub fn formatError(self: *Parser, writer: anytype) !void {
+        try writer.print("parse error at token {d}\n", .{self.errorIndex});
+
+        if (self.lastExpectation) |exp| {
+            try writer.print("expected ", .{});
+            switch (exp) {
+                .Identifier => try writer.print("identifier\n", .{}),
+                .Token => |t| try writer.print("{s}\n", .{@tagName(t)}),
+                .Pattern => |p| try writer.print("{s}\n", .{p}),
+            }
+        }
+    }
+
+    pub fn parse(self: *Parser) !std.ArrayList(Op) {
+        var ops = std.ArrayList(Op).init(self.allocator);
+        errdefer ops.deinit();
+
+        while (self.peek() != null) {
+            const tok = self.next().?;
+
+            switch (tok) {
+                // VAR be VALUE
+                .identifier => {
+                    self.lastExpectation = .{ .Pattern = "VAR be VALUE" };
+                    try self.expect(.be);
+                    const value = try self.expectIdentifier();
+
+                    try ops.append(.{
+                        .Assign = .{
+                            .name = tok.identifier,
+                            .value = value,
+                        },
+                    });
+                },
+
+                // yap VAR
+                .yap => {
+                    self.lastExpectation = .{ .Pattern = "yap VAR" };
+                    const value = try self.expectIdentifier();
+
+                    try ops.append(.{
+                        .Yap = .{ .value = value },
+                    });
+                },
+
+                // throw MSG
+                .throw => |msg| {
+                    try ops.append(.{
+                        .Throw = .{ .message = msg },
+                    });
+                },
+
+                else => return error.UnexpectedToken,
+            }
+        }
+
+        return ops;
+    }
+};

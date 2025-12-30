@@ -26,10 +26,34 @@ pub fn main() !void {
     };
     defer allocator.free(source);
 
-    yap.run(allocator, source) catch |err| {
-        printRuntimeError(err);
-        return;
-    };
+    const compile_result = yap.compile(allocator, source);
+
+    switch (compile_result) {
+        .Ok => |ir| {
+            defer ir.deinit();
+            yap.run(allocator, ir) catch |err| {
+                std.debug.print("runtime error: {}\n", .{err});
+            };
+        },
+
+        .Err => |err| switch (err) {
+            .Parse => |p| {
+                std.debug.print(
+                    "parse error at token {d}\n",
+                    .{p.index},
+                );
+
+                if (p.expectation) |exp| {
+                    printExpectation(exp);
+                }
+            },
+
+            .OutOfMemory => std.debug.print("error: out of memory\n", .{}),
+            .Internal => {
+                std.debug.print("internal compiler error\n", .{});
+            },
+        },
+    }
 }
 
 fn printUsage() void {
@@ -63,13 +87,11 @@ fn printFileError(path: []const u8, err: anyerror) void {
     }
 }
 
-fn printRuntimeError(err: anyerror) void {
-    switch (err) {
-        error.RuntimeError => {
-            std.debug.print("runtime error occurred\n", .{});
-        },
-        else => {
-            std.debug.print("unexpected error: {}\n", .{err});
-        },
+fn printExpectation(exp: yap.parser.Expectation) void {
+    std.debug.print("expected ", .{});
+    switch (exp) {
+        .Identifier => std.debug.print("identifier\n", .{}),
+        .Token => |t| std.debug.print("{s}\n", .{@tagName(t)}),
+        .Pattern => |p| std.debug.print("{s}\n", .{p}),
     }
 }

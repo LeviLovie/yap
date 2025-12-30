@@ -1,23 +1,29 @@
 const std = @import("std");
 
-pub const lexer = @import("lexer.zig");
-pub const parser = @import("parser.zig");
-pub const runtime = @import("runtime.zig");
-pub const Token = @import("token.zig").Token;
+pub const Compiler = @import("compiler.zig").Compiler;
+pub const CompileError = @import("compiler.zig").CompileError;
+pub const CompileResult = @import("compiler.zig").CompileResult;
+pub const Ir = @import("ir.zig").Ir;
 pub const Op = @import("op.zig").Op;
+pub const parser = @import("parser.zig");
+pub const Token = @import("token.zig").Token;
+pub const lexer = @import("lexer.zig");
+pub const runtime = @import("runtime.zig");
+
+pub fn compile(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+) CompileResult {
+    var compiler = Compiler.init(allocator, source);
+    defer compiler.deinit();
+    return compiler.compile();
+}
 
 pub fn run(
     allocator: std.mem.Allocator,
-    source: []const u8,
+    ir: Ir,
 ) !void {
-    var tokens = try lexer.lex(allocator, source);
-    defer tokens.deinit();
-
-    var ops = try parser.parse(allocator, tokens.items);
-    defer ops.deinit();
-
     var rt = runtime.Runtime.init(allocator);
     defer rt.deinit();
-
-    try rt.exec(ops.items);
+    try rt.exec(ir.ops);
 }
