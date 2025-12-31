@@ -38,3 +38,10 @@ pub fn runProgram(
         },
     }
 }
+
+pub fn hasString(strings: []const []const u8, needle: []const u8) bool {
+    for (strings) |s| {
+        if (std.mem.eql(u8, s, needle)) return true;
+    }
+    return false;
+}

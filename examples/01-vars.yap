@@ -7,7 +7,3 @@ yap "test"
 yap mode
 yap file
 yap num
-
-equals be mode reckons "test.txt"
-yap equals
-yap num reckons 4.1

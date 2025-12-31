@@ -6,7 +6,7 @@ const parser = @import("parser.zig");
 
 pub const CompileError = union(enum) {
     Parse: struct {
-        index: usize,
+        span: ?Span,
         expectation: ?parser.Expectation,
     },
     Lex: struct {
@@ -67,7 +67,7 @@ pub const Compiler = struct {
             return .{
                 .Err = .{
                     .Parse = .{
-                        .index = p.errorIndex,
+                        .span = p.errorSpan,
                         .expectation = p.lastExpectation,
                     },
                 },

@@ -1,5 +1,6 @@
 const Identifier = @import("token.zig").Identifier;
 const Op = @import("op.zig").Op;
+const Span = @import("span.zig").Span;
 const StringID = @import("ir.zig").StringID;
 const Token = @import("token.zig").Token;
 const Value = @import("value.zig").Value;
@@ -31,7 +32,7 @@ pub const Parser = struct {
     string_map: std.StringHashMap(StringID),
 
     lastExpectation: ?Expectation = null,
-    errorIndex: usize = 0,
+    errorSpan: ?Span = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -54,6 +55,12 @@ pub const Parser = struct {
         self.string_map.deinit();
     }
 
+    fn boxValue(self: *Parser, v: Value) !*Value {
+        const p = try self.allocator.create(Value);
+        p.* = v;
+        return p;
+    }
+
     fn has(self: *Parser, n: usize) bool {
         return self.index + n <= self.tokens.len;
     }
@@ -72,15 +79,14 @@ pub const Parser = struct {
 
     fn expect(self: *Parser, expected: std.meta.Tag(Token)) !void {
         const tok = self.next() orelse {
-
             self.lastExpectation = .{ .Token = expected };
-            self.errorIndex = self.index;
+            self.errorSpan = null;
             return error.UnexpectedEof;
         };
 
         if (std.meta.activeTag(tok) != expected) {
             self.lastExpectation = .{ .Token = expected };
-            self.errorIndex = self.index - 1;
+            self.errorSpan = tok.span();
             return error.UnexpectedToken;
         }
     }
@@ -88,7 +94,7 @@ pub const Parser = struct {
     fn expectIdentifier(self: *Parser) !Identifier {
         const tok = self.next() orelse {
             self.lastExpectation = .Identifier;
-            self.errorIndex = self.index;
+            self.errorSpan = null;
             return error.UnexpectedEof;
         };
 
@@ -96,7 +102,7 @@ pub const Parser = struct {
             .identifier => |id| id,
             else => {
                 self.lastExpectation = .Identifier;
-                self.errorIndex = self.index - 1;
+                self.errorSpan = tok.span();
                 return error.UnexpectedToken;
             },
         };
@@ -105,7 +111,7 @@ pub const Parser = struct {
     fn expectValue(self: *Parser) !Value {
         const tok = self.next() orelse {
             self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
-            self.errorIndex = self.index;
+            self.errorSpan = null;
             return error.UnexpectedEof;
         };
 
@@ -135,7 +141,7 @@ pub const Parser = struct {
 
             else => {
                 self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
-                self.errorIndex = self.index - 1;
+                self.errorSpan = null;
                 return error.UnexpectedToken;
             },
         };
@@ -157,7 +163,12 @@ pub const Parser = struct {
     }
 
     pub fn formatError(self: *Parser, writer: anytype) !void {
-        try writer.print("parse error at token {d}\n", .{self.errorIndex});
+        if (self.errorSpan) |sp| {
+            writer.print(
+                "parse error at line {d}, column {d}\n",
+                .{ sp.line, sp.column },
+            );
+        }
 
         if (self.lastExpectation) |exp| {
             try writer.print("expected ", .{});
@@ -176,12 +187,12 @@ pub const Parser = struct {
             const tok = self.next().?;
 
             switch (tok) {
-                // VAR be VALUE
+                // IDENT assign EXPR
                 .identifier => |identifier| {
-                    self.lastExpectation = .{ .Pattern = "VAR be VALUE" };
-                    try self.expect(.be);
+                    self.lastExpectation = .{ .Pattern = "IDENT assign EXPR" };
+                    try self.expect(.assign);
 
-                    const value = try self.expectValue();
+                    const value = try self.parseExpr();
                     const name_id = try self.stringId(identifier.name);
 
                     try self.ops.append(.{
@@ -193,15 +204,15 @@ pub const Parser = struct {
                     });
                 },
 
-                // yap VALUE
-                .yap => |span| {
-                    self.lastExpectation = .{ .Pattern = "yap VALUE" };
-                    const value = try self.expectValue();
+                // print EXPR
+                .print => |sp| {
+                    self.lastExpectation = .{ .Pattern = "print EXPR" };
+                    const value = try self.parseExpr();
 
                     try self.ops.append(.{
-                        .Yap = .{
+                        .Print = .{
                             .value = value,
-                            .span = span,
+                            .span = sp,
                         },
                     });
                 },
@@ -209,12 +220,8 @@ pub const Parser = struct {
                 // throw MSG
                 .throw => |t| {
                     const msg_id = try self.stringId(t.message);
-
                     try self.ops.append(.{
-                        .Throw = .{
-                            .message = msg_id,
-                            .span = t.span,
-                        },
+                        .Throw = .{ .message = msg_id, .span = t.span },
                     });
                 },
 
@@ -222,18 +229,65 @@ pub const Parser = struct {
             }
         }
 
-        // transfer ownership
         const ops = try self.ops.toOwnedSlice();
         const strings = try self.strings.toOwnedSlice();
 
-        // prevent double-free
         self.ops = undefined;
         self.strings = undefined;
         self.string_map.deinit();
 
-        return .{
-            .ops = ops,
-            .strings = strings,
+        return .{ .ops = ops, .strings = strings };
+    }
+
+    fn parsePrimary(self: *Parser) !Value {
+        const tok = self.next() orelse {
+            self.lastExpectation = .{ .Pattern = "VALUE" };
+            self.errorSpan = null;
+            return error.UnexpectedEof;
         };
+
+        return switch (tok) {
+            .identifier => |id| .{
+                .identifier = .{
+                    .name = try self.stringId(id.name),
+                    .span = id.span,
+                },
+            },
+
+            .literal => |lit| switch (lit) {
+                .number => |n| .{ .literal = .{ .number = .{ .value = n.value, .span = n.span } } },
+                .string => |s| .{ .literal = .{ .string = .{ .value = try self.stringId(s.value), .span = s.span } } },
+            },
+
+            .truth => |sp| .{ .truth = sp },
+            .none => |sp| .{ .none = sp },
+
+            else => {
+                self.lastExpectation = .{ .Pattern = "VALUE" };
+                self.errorSpan = tok.span();
+                return error.UnexpectedToken;
+            },
+        };
+    }
+
+    fn parseExpr(self: *Parser) !Value {
+        var left = try self.parsePrimary();
+
+        while (true) {
+            const peeked = self.peek() orelse break;
+            if (std.meta.activeTag(peeked) != .equals) break;
+            const eq_span = self.next().?.equals;
+            const right = try self.parsePrimary();
+
+            left = .{
+                .compare = .{
+                    .left = try self.boxValue(left),
+                    .right = try self.boxValue(right),
+                    .span = eq_span,
+                },
+            };
+        }
+
+        return left;
     }
 };

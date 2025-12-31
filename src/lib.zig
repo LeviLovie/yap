@@ -5,14 +5,14 @@ pub const CompileResult = @import("compiler.zig").CompileResult;
 pub const Compiler = @import("compiler.zig").Compiler;
 pub const Identifier = @import("token.zig").Identifier;
 pub const Ir = @import("ir.zig").Ir;
+pub const Lexer = @import("lexer.zig").Lexer;
 pub const Literal = @import("token.zig").Literal;
 pub const Op = @import("op.zig").Op;
+pub const Parser = @import("parser.zig").Parser;
+pub const Runtime = @import("runtime.zig").Runtime;
 pub const Span = @import("span.zig").Span;
 pub const Token = @import("token.zig").Token;
 pub const codec = @import("codec.zig");
-pub const lexer = @import("lexer.zig");
-pub const parser = @import("parser.zig");
-pub const runtime = @import("runtime.zig");
 
 pub const BuildResult = union(enum) {
     Ok,
@@ -60,7 +60,7 @@ pub fn runFromFile(
     var ir = try Ir.deserialize(allocator, reader);
     defer ir.deinit();
 
-    var rt = runtime.Runtime.init(allocator);
+    var rt = Runtime.init(allocator);
     defer rt.deinit();
 
     try rt.exec(writer, ir.strings, ir.ops);
@@ -71,7 +71,7 @@ pub fn runWithWriter(
     writer: anytype,
     ir: Ir,
 ) !void {
-    var rt = runtime.Runtime.init(allocator);
+    var rt = Runtime.init(allocator);
     defer rt.deinit();
     rt.exec(writer, ir.strings, ir.ops) catch |err| {
         switch (err) {
@@ -93,7 +93,14 @@ pub fn formatCompileError(
 
     switch (err) {
         .Parse => |p| {
-            try w.print("parse error at token {d}\n", .{p.index});
+            if (p.span) |span| {
+                try w.print(
+                    "parse error at {d}:{d}\n",
+                    .{ span.line, span.column },
+                );
+            } else {
+                try w.print("parse error at unknown location\n", .{});
+            }
             if (p.expectation) |exp| {
                 try w.print("expected ", .{});
                 switch (exp) {

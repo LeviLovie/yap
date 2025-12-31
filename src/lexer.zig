@@ -109,10 +109,19 @@ pub const Lexer = struct {
         const span = self.makeSpan(start);
 
         if (std.mem.eql(u8, word, "be")) {
-            return .{ .be = span };
+            return .{ .assign = span };
         }
         if (std.mem.eql(u8, word, "yap")) {
-            return .{ .yap = span };
+            return .{ .print = span };
+        }
+        if (std.mem.eql(u8, word, "yeah")) {
+            return .{ .truth = span };
+        }
+        if (std.mem.eql(u8, word, "nope")) {
+            return .{ .none = span };
+        }
+        if (std.mem.eql(u8, word, "reckons")) {
+            return .{ .equals = span };
         }
         if (std.mem.eql(u8, word, "throw")) {
             self.skipWhitespace();

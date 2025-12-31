@@ -38,15 +38,9 @@ pub const Runtime = struct {
                 try self.vars.put(name, a.value);
             },
 
-            .Yap => |y| {
-                const v2 = try self.resolve(writer, strings, y.value);
-                switch (v2) {
-                    .literal => |lit| switch (lit) {
-                        .number => |n| try writer.print("{d}\n", .{n.value}),
-                        .string => |s| try writer.print("{s}\n", .{strings[s.value]}),
-                    },
-                    else => unreachable,
-                }
+            .Print => |p| {
+                const v = try self.resolve(writer, strings, p.value);
+                try printValue(writer, strings, v);
             },
 
             .Throw => |t| {
@@ -73,13 +67,27 @@ pub const Runtime = struct {
         };
     }
 
-    fn printLiteral(writer: anytype, lit: Literal) void {
-        switch (lit) {
-            .number => |n| {
-                writer.print("{d}\n", .{n.value}) catch {};
+    fn printValue(
+        writer: anytype,
+        strings: []const []const u8,
+        v: Value,
+    ) !void {
+        switch (v) {
+            .literal => |lit| switch (lit) {
+                .number => |n| {
+                    try writer.print("{d}\n", .{n.value});
+                },
+                .string => |s| {
+                    try writer.print("{s}\n", .{strings[s.value]});
+                },
             },
-            .string => |s| {
-                writer.print("{s}\n", .{s.value}) catch {};
+
+            .truth => |_| try writer.print("yeah\n", .{}),
+            .none => |_| try writer.print("nope\n", .{}),
+
+            else => {
+                try writer.print("cannot print value\n", .{});
+                return error.RuntimeError;
             },
         }
     }
@@ -94,6 +102,18 @@ pub const Runtime = struct {
                     return error.RuntimeError;
                 };
                 return try self.resolve(writer, strings, stored);
+            },
+            .truth => v,
+            .none => v,
+            .compare => |c| {
+                const left_val = try self.resolve(writer, strings, c.left.*);
+                const right_val = try self.resolve(writer, strings, c.right.*);
+
+                if (left_val.equals(right_val)) {
+                    return .{ .truth = c.span };
+                } else {
+                    return .{ .none = c.span };
+                }
             },
         };
     }

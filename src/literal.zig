@@ -10,4 +10,11 @@ pub const Literal = union(enum) {
         value: []const u8,
         span: Span
     },
+
+    pub fn span(self: Literal) Span {
+        return switch (self) {
+            .number => |n| n.span,
+            .string => |s| s.span,
+        };
+    }
 };

@@ -103,10 +103,24 @@ pub fn writeValue(w: anytype, v: Value) !void {
                 try writeSpan(w, s.span);
             },
         },
+        .truth => |span| {
+            try writeU8(w, 3);
+            try writeSpan(w, span);
+        },
+        .none => |span| {
+            try writeU8(w, 4);
+            try writeSpan(w, span);
+        },
+        .compare => |c| {
+            try writeU8(w, 5);
+            try writeValue(w, c.left.*);
+            try writeValue(w, c.right.*);
+            try writeSpan(w, c.span);
+        },
     }
 }
 
-pub fn readValue(r: anytype) !Value {
+pub fn readValue(allocator: std.mem.Allocator, r: anytype) !Value {
     const tag = try readU8(r);
     return switch (tag) {
         0 => .{
@@ -132,6 +146,47 @@ pub fn readValue(r: anytype) !Value {
                 },
             },
         },
+        3 => .{
+            .truth = try readSpan(r),
+        },
+        4 => .{
+            .none = try readSpan(r),
+        },
+        5 => blk: {
+            var left_val = try readValue(allocator, r);
+            errdefer left_val.deinit(allocator);
+
+            var right_val = try readValue(allocator, r);
+            errdefer right_val.deinit(allocator);
+
+            const sp = try readSpan(r);
+
+            const left_ptr = try allocator.create(Value);
+            errdefer {
+                left_ptr.*.deinit(allocator);
+                allocator.destroy(left_ptr);
+            }
+            left_ptr.* = left_val;
+
+            left_val = .{ .none = .{ .start = 0, .end = 0, .line = 0, .column = 0 } };
+
+            const right_ptr = try allocator.create(Value);
+            errdefer {
+                right_ptr.*.deinit(allocator);
+                allocator.destroy(right_ptr);
+            }
+            right_ptr.* = right_val;
+
+            right_val = .{ .none = .{ .start = 0, .end = 0, .line = 0, .column = 0 } };
+
+            break :blk .{
+                .compare = .{
+                    .left = left_ptr,
+                    .right = right_ptr,
+                    .span = sp,
+                },
+            };
+        },
         else => return error.InvalidFormat,
     };
 }
@@ -144,8 +199,8 @@ pub fn writeOp(w: anytype, op: Op) !void {
             try writeUsize(w, a.name);
             try writeValue(w, a.value);
         },
-        .Yap => |y| {
-            try writeU8(w, @intFromEnum(OpTag.Yap));
+        .Print => |y| {
+            try writeU8(w, @intFromEnum(OpTag.Print));
             try writeSpan(w, y.span);
             try writeValue(w, y.value);
         },
@@ -157,7 +212,7 @@ pub fn writeOp(w: anytype, op: Op) !void {
     }
 }
 
-pub fn readOp(r: anytype) !Op {
+pub fn readOp(allocator: std.mem.Allocator, r: anytype) !Op {
     const tag_u8 = try readU8(r);
     const tag: OpTag = @enumFromInt(tag_u8);
 
@@ -165,13 +220,13 @@ pub fn readOp(r: anytype) !Op {
         .Assign => blk: {
             const span = try readSpan(r);
             const name = try readUsize(r);
-            const value = try readValue(r);
+            const value = try readValue(allocator, r);
             break :blk .{ .Assign = .{ .name = name, .value = value, .span = span } };
         },
-        .Yap => blk: {
+        .Print => blk: {
             const span = try readSpan(r);
-            const value = try readValue(r);
-            break :blk .{ .Yap = .{ .value = value, .span = span } };
+            const value = try readValue(allocator, r);
+            break :blk .{ .Print = .{ .value = value, .span = span } };
         },
         .Throw => blk: {
             const span = try readSpan(r);
@@ -196,7 +251,7 @@ pub fn readOps(allocator: std.mem.Allocator, r: anytype) ![]Op {
     errdefer allocator.free(ops);
 
     for (ops) |*op| {
-        op.* = try readOp(r);
+        op.* = try readOp(allocator, r);
     }
 
     return ops;

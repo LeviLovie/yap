@@ -1,0 +1,5 @@
+yap 5.4 reckons 4.1
+
+mode be "test.txt"
+equals be mode reckons "test.txt"
+yap equals

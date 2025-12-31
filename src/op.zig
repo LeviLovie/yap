@@ -8,7 +8,7 @@ const std = @import("std");
 
 pub const OpTag = enum(u8) {
     Assign,
-    Yap,
+    Print,
     Throw,
 };
 
@@ -18,7 +18,7 @@ pub const Op = union(enum) {
         value: Value,
         span: Span,
     },
-    Yap: struct {
+    Print: struct {
         value: Value,
         span: Span,
     },
@@ -32,7 +32,7 @@ pub const Op = union(enum) {
             .Assign => |a| {
                 a.value.deinit(allocator);
             },
-            .Yap => |y| y.value.deinit(allocator),
+            .Print => |y| y.value.deinit(allocator),
             .Throw => |_| {},
         }
     }
