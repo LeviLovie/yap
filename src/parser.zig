@@ -26,6 +26,10 @@ pub const Parser = struct {
     tokens: []const Token,
     index: usize,
 
+    ops: std.ArrayList(Op),
+    strings: std.ArrayList([]const u8),
+    string_map: std.StringHashMap(StringID),
+
     lastExpectation: ?Expectation = null,
     errorIndex: usize = 0,
 
@@ -37,7 +41,17 @@ pub const Parser = struct {
             .allocator = allocator,
             .tokens = tokens,
             .index = 0,
+            .ops = std.ArrayList(Op).init(allocator),
+            .strings = std.ArrayList([]const u8).init(allocator),
+            .string_map = std.StringHashMap(StringID).init(allocator),
         };
+    }
+
+    pub fn deinit(self: *Parser) void {
+        for (self.strings.items) |s| self.allocator.free(s);
+        self.ops.deinit();
+        self.strings.deinit();
+        self.string_map.deinit();
     }
 
     fn has(self: *Parser, n: usize) bool {
@@ -88,14 +102,7 @@ pub const Parser = struct {
         };
     }
 
-    fn intern(self: *Parser, strings: *std.ArrayList([]const u8), s: []const u8) !StringID {
-        const owned = try self.allocator.dupe(u8, s);
-        errdefer self.allocator.free(owned);
-        try strings.append(owned);
-        return strings.items.len - 1;
-    }
-
-    fn expectValue(self: *Parser, strings: *std.ArrayList([]const u8)) !Value {
+    fn expectValue(self: *Parser) !Value {
         const tok = self.next() orelse {
             self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
             self.errorIndex = self.index;
@@ -103,29 +110,50 @@ pub const Parser = struct {
         };
 
         return switch (tok) {
-            .identifier => |id_tok| .{
+            .identifier => |id| .{
                 .identifier = .{
-                    .name = try self.intern(strings, id_tok.name),
-                    .span = id_tok.span,
+                    .name = try self.stringId(id.name),
+                    .span = id.span,
                 },
             },
-            .literal => |lit_tok| switch (lit_tok) {
-                .number => |n| .{ .literal = .{ .number = .{ .value = n.value, .span = n.span } } },
+
+            .literal => |lit| switch (lit) {
+                .number => |n| .{
+                    .literal = .{
+                        .number = .{ .value = n.value, .span = n.span },
+                    },
+                },
                 .string => |s| .{
                     .literal = .{
                         .string = .{
-                            .value = try self.intern(strings, s.value),
+                            .value = try self.stringId(s.value),
                             .span = s.span,
                         },
                     },
                 },
             },
+
             else => {
                 self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
                 self.errorIndex = self.index - 1;
                 return error.UnexpectedToken;
             },
         };
+    }
+
+    fn stringId(self: *Parser, s: []const u8) !StringID {
+        if (self.string_map.get(s)) |id| {
+            return id;
+        }
+
+        const owned = try self.allocator.dupe(u8, s);
+        errdefer self.allocator.free(owned);
+
+        const id: StringID = self.strings.items.len;
+        try self.strings.append(owned);
+        try self.string_map.put(owned, id);
+
+        return id;
     }
 
     pub fn formatError(self: *Parser, writer: anytype) !void {
@@ -142,9 +170,7 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !ParseResult {
-        var ops = std.ArrayList(Op).init(self.allocator);
-        var strings = std.ArrayList([]const u8).init(self.allocator);
-        errdefer ops.deinit();
+        errdefer self.deinit();
 
         while (self.peek() != null) {
             const tok = self.next().?;
@@ -154,27 +180,25 @@ pub const Parser = struct {
                 .identifier => |identifier| {
                     self.lastExpectation = .{ .Pattern = "VAR be VALUE" };
                     try self.expect(.be);
-                    const value = try self.expectValue(&strings);
 
-                    const owned_name = try self.allocator.dupe(u8, identifier.name);
-                    try strings.append(owned_name);
-                    const string_id = strings.items.len - 1;
+                    const value = try self.expectValue();
+                    const name_id = try self.stringId(identifier.name);
 
-                    try ops.append(.{
+                    try self.ops.append(.{
                         .Assign = .{
-                            .name = string_id,
+                            .name = name_id,
                             .value = value,
                             .span = identifier.span,
                         },
                     });
                 },
 
-                // yap VAR
+                // yap VALUE
                 .yap => |span| {
                     self.lastExpectation = .{ .Pattern = "yap VALUE" };
-                    const value = try self.expectValue(&strings);
+                    const value = try self.expectValue();
 
-                    try ops.append(.{
+                    try self.ops.append(.{
                         .Yap = .{
                             .value = value,
                             .span = span,
@@ -183,14 +207,13 @@ pub const Parser = struct {
                 },
 
                 // throw MSG
-                .throw => |throw| {
-                    try strings.append(throw.message);
-                    const string_id = strings.items.len - 1;
+                .throw => |t| {
+                    const msg_id = try self.stringId(t.message);
 
-                    try ops.append(.{
+                    try self.ops.append(.{
                         .Throw = .{
-                            .message = string_id,
-                            .span = throw.span,
+                            .message = msg_id,
+                            .span = t.span,
                         },
                     });
                 },
@@ -199,9 +222,18 @@ pub const Parser = struct {
             }
         }
 
+        // transfer ownership
+        const ops = try self.ops.toOwnedSlice();
+        const strings = try self.strings.toOwnedSlice();
+
+        // prevent double-free
+        self.ops = undefined;
+        self.strings = undefined;
+        self.string_map.deinit();
+
         return .{
-            .ops = try ops.toOwnedSlice(),
-            .strings = try strings.toOwnedSlice(),
+            .ops = ops,
+            .strings = strings,
         };
     }
 };
