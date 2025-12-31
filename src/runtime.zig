@@ -1,8 +1,8 @@
 const std = @import("std");
 const Op = @import("op.zig").Op;
 const Token = @import("token.zig").Token;
-const Value = @import("op.zig").Value;
-const Literal = @import("token.zig").Literal;
+const Value = @import("value.zig").Value;
+const Literal = @import("literal.zig").Literal;
 
 pub const RuntimeError = error{
     RuntimeError,
@@ -26,19 +26,32 @@ pub const Runtime = struct {
         self.vars.deinit();
     }
 
-    pub fn exec(self: *Runtime, writer: anytype, ops: []const Op) !void {
+    pub fn exec(
+        self: *Runtime,
+        writer: anytype,
+        strings: []const []const u8,
+        ops: []const Op,
+    ) !void {
         for (ops) |op| switch (op) {
             .Assign => |a| {
-                try self.vars.put(a.name, a.value);
+                const name = strings[a.name];
+                try self.vars.put(name, a.value);
             },
 
             .Yap => |y| {
-                const lit = try self.resolve(writer, y.value);
-                printLiteral(writer, lit);
+                const v2 = try self.resolve(writer, strings, y.value);
+                switch (v2) {
+                    .literal => |lit| switch (lit) {
+                        .number => |n| try writer.print("{d}\n", .{n.value}),
+                        .string => |s| try writer.print("{s}\n", .{strings[s.value]}),
+                    },
+                    else => unreachable,
+                }
             },
 
             .Throw => |t| {
-                writer.print("Error: {s}\n", .{t.message}) catch {};
+                const msg = strings[t.message];
+                writer.print("Error: {s}\n", .{msg}) catch {};
                 return error.RuntimeError;
             },
         };
@@ -71,17 +84,16 @@ pub const Runtime = struct {
         }
     }
 
-    fn resolve(self: *Runtime, writer: anytype, v: Value) !Literal {
+    fn resolve(self: *Runtime, writer: anytype, strings: []const []const u8, v: Value) !Value {
         return switch (v) {
-            .literal => |lit| lit,
-
-            .identifier => |id| blk: {
-                const stored = self.vars.get(id.name) orelse {
-                    writer.print("undefined variable: {s}\n", .{id.name}) catch {};
+            .literal => v,
+            .identifier => |id| {
+                const name = strings[id.name];
+                const stored = self.vars.get(name) orelse {
+                    writer.print("undefined variable: {s}\n", .{name}) catch {};
                     return error.RuntimeError;
                 };
-
-                break :blk try self.resolve(writer, stored);
+                return try self.resolve(writer, strings, stored);
             },
         };
     }

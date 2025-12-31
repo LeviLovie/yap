@@ -63,7 +63,7 @@ pub const Compiler = struct {
 
         var p = parser.Parser.init(self.allocator, tokens.items);
 
-        var ops = p.parse() catch {
+        const res = p.parse() catch {
             return .{
                 .Err = .{
                     .Parse = .{
@@ -73,14 +73,7 @@ pub const Compiler = struct {
                 },
             };
         };
-        defer ops.deinit();
 
-        const owned_ops = ops.toOwnedSlice() catch |err| switch (err) {
-            error.OutOfMemory => {
-                ops.deinit();
-                return .{ .Err = .OutOfMemory };
-            },
-        };
-        return .{ .Ok = Ir.init(self.allocator, owned_ops) };
+        return .{ .Ok = Ir.init(self.allocator, res.strings, res.ops) };
     }
 };

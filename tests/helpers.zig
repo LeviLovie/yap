@@ -5,24 +5,36 @@ pub fn runProgram(
     allocator: std.mem.Allocator,
     source: []const u8,
 ) ![]u8 {
-    var out = std.ArrayList(u8).init(allocator);
-    errdefer out.deinit();
-    const writer = out.writer();
-
     const result = yap.compile(allocator, source);
 
     switch (result) {
+        .Err => |err| {
+            return try yap.formatCompileError(allocator, err);
+        },
         .Ok => |ir| {
             defer ir.deinit();
-            try yap.runWithWriter(allocator, writer, ir);
-        },
 
-        .Err => |err| {
-            const msg = try yap.formatCompileError(allocator, err);
-            defer allocator.free(msg);
-            try writer.writeAll(msg);
+            // Run the IR
+            var out_ir = std.ArrayList(u8).init(allocator);
+            defer out_ir.deinit();
+            try yap.runWithWriter(allocator, out_ir.writer(), ir);
+
+            // Serialize -> Deserialize -> Run IR
+            var buffer = std.ArrayList(u8).init(allocator);
+            defer buffer.deinit();
+            try ir.serialize(buffer.writer());
+
+            var stream = std.io.fixedBufferStream(buffer.items);
+            var deserialized_ir = try yap.Ir.deserialize(allocator, stream.reader());
+            defer deserialized_ir.deinit();
+
+            var out_deser = std.ArrayList(u8).init(allocator);
+            defer out_deser.deinit();
+            try yap.runWithWriter(allocator, out_deser.writer(), deserialized_ir);
+
+            // Compare the two
+            try std.testing.expectEqualStrings(out_ir.items, out_deser.items);
+            return out_ir.toOwnedSlice();
         },
     }
-
-    return out.toOwnedSlice();
 }

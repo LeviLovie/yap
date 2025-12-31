@@ -1,7 +1,7 @@
 const Op = @import("op.zig").Op;
 const OpTag = @import("op.zig").OpTag;
 const Span = @import("span.zig").Span;
-const Value = @import("op.zig").Value;
+const Value = @import("value.zig").Value;
 const std = @import("std");
 
 pub const CodecError = error{
@@ -19,11 +19,12 @@ pub fn readU32(r: anytype) !u32 {
 }
 
 pub fn writeUsize(w: anytype, v: usize) !void {
-    try w.writeInt(usize, v, .little);
+    try writeU32(w, @intCast(v));
 }
 
 pub fn readUsize(r: anytype) !usize {
-    return try r.readInt(usize, .little);
+    const v = try readU32(r);
+    return @intCast(v);
 }
 
 pub fn writeU8(w: anytype, v: u8) !void {
@@ -87,7 +88,7 @@ pub fn writeValue(w: anytype, v: Value) !void {
     switch (v) {
         .identifier => |id| {
             try writeU8(w, 0);
-            try writeString(w, id.name);
+            try writeUsize(w, id.name);
             try writeSpan(w, id.span);
         },
         .literal => |lit| switch (lit) {
@@ -98,19 +99,19 @@ pub fn writeValue(w: anytype, v: Value) !void {
             },
             .string => |s| {
                 try writeU8(w, 2);
-                try writeString(w, s.value);
+                try writeUsize(w, s.value);
                 try writeSpan(w, s.span);
             },
         },
     }
 }
 
-pub fn readValue(allocator: std.mem.Allocator, r: anytype) !Value {
+pub fn readValue(r: anytype) !Value {
     const tag = try readU8(r);
     return switch (tag) {
         0 => .{
             .identifier = .{
-                .name = try readStringAlloc(allocator, r),
+                .name = try readUsize(r),
                 .span = try readSpan(r),
             },
         },
@@ -126,7 +127,7 @@ pub fn readValue(allocator: std.mem.Allocator, r: anytype) !Value {
         2 => .{
             .literal = .{
                 .string = .{
-                    .value = try readStringAlloc(allocator, r),
+                    .value = try readUsize(r),
                     .span = try readSpan(r),
                 },
             },
@@ -140,7 +141,7 @@ pub fn writeOp(w: anytype, op: Op) !void {
         .Assign => |a| {
             try writeU8(w, @intFromEnum(OpTag.Assign));
             try writeSpan(w, a.span);
-            try writeString(w, a.name);
+            try writeUsize(w, a.name);
             try writeValue(w, a.value);
         },
         .Yap => |y| {
@@ -151,30 +152,30 @@ pub fn writeOp(w: anytype, op: Op) !void {
         .Throw => |t| {
             try writeU8(w, @intFromEnum(OpTag.Throw));
             try writeSpan(w, t.span);
-            try writeString(w, t.message);
+            try writeUsize(w, t.message);
         },
     }
 }
 
-pub fn readOp(allocator: std.mem.Allocator, r: anytype) !Op {
+pub fn readOp(r: anytype) !Op {
     const tag_u8 = try readU8(r);
     const tag: OpTag = @enumFromInt(tag_u8);
 
     return switch (tag) {
         .Assign => blk: {
             const span = try readSpan(r);
-            const name = try readStringAlloc(allocator, r);
-            const value = try readValue(allocator, r);
+            const name = try readUsize(r);
+            const value = try readValue(r);
             break :blk .{ .Assign = .{ .name = name, .value = value, .span = span } };
         },
         .Yap => blk: {
             const span = try readSpan(r);
-            const value = try readValue(allocator, r);
+            const value = try readValue(r);
             break :blk .{ .Yap = .{ .value = value, .span = span } };
         },
         .Throw => blk: {
             const span = try readSpan(r);
-            const message = try readStringAlloc(allocator, r);
+            const message = try readUsize(r);
             break :blk .{ .Throw = .{ .message = message, .span = span } };
         },
     };
@@ -195,8 +196,28 @@ pub fn readOps(allocator: std.mem.Allocator, r: anytype) ![]Op {
     errdefer allocator.free(ops);
 
     for (ops) |*op| {
-        op.* = try readOp(allocator, r);
+        op.* = try readOp(r);
     }
 
     return ops;
+}
+
+pub fn writeStringTable(strings: []const []const u8, w: anytype) !void {
+    try writeU32(w, @intCast(strings.len));
+    for (strings) |s| try writeString(w, s);
+}
+
+pub fn readStringTable(allocator: std.mem.Allocator, r: anytype) ![]const []const u8 {
+    const n = @as(usize, @intCast(try readU32(r)));
+    const table = try allocator.alloc([]const u8, n);
+    errdefer {
+        for (table[0..]) |s| allocator.free(s);
+        allocator.free(table);
+    }
+
+    for (table) |*slot| {
+        slot.* = try readStringAlloc(allocator, r);
+    }
+
+    return table;
 }

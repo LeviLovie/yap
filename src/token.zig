@@ -1,19 +1,10 @@
 const Span = @import("span.zig").Span;
+const Literal = @import("literal.zig").Literal;
+const StringID = @import("ir.zig").StringID;
 
 pub const Identifier = struct {
     name: []const u8,
     span: Span,
-};
-
-pub const Literal = union(enum) {
-    number: struct {
-        value: f64,
-        span: Span,
-    },
-    string: struct {
-        value: []const u8,
-        span: Span,
-    },
 };
 
 pub const Token = union(enum) {

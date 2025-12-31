@@ -1,8 +1,14 @@
-const std = @import("std");
 const Identifier = @import("token.zig").Identifier;
 const Op = @import("op.zig").Op;
+const StringID = @import("ir.zig").StringID;
 const Token = @import("token.zig").Token;
-const Value = @import("op.zig").Value;
+const Value = @import("value.zig").Value;
+const std = @import("std");
+
+pub const ParseResult = struct {
+    ops: []Op,
+    strings: []const []const u8,
+};
 
 pub const ParseError = error{
     UnexpectedToken,
@@ -82,7 +88,14 @@ pub const Parser = struct {
         };
     }
 
-    fn expectValue(self: *Parser) !Value {
+    fn intern(self: *Parser, strings: *std.ArrayList([]const u8), s: []const u8) !StringID {
+        const owned = try self.allocator.dupe(u8, s);
+        errdefer self.allocator.free(owned);
+        try strings.append(owned);
+        return strings.items.len - 1;
+    }
+
+    fn expectValue(self: *Parser, strings: *std.ArrayList([]const u8)) !Value {
         const tok = self.next() orelse {
             self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
             self.errorIndex = self.index;
@@ -90,8 +103,23 @@ pub const Parser = struct {
         };
 
         return switch (tok) {
-            .identifier => |id| .{ .identifier = id },
-            .literal => |lit| .{ .literal = lit },
+            .identifier => |id_tok| .{
+                .identifier = .{
+                    .name = try self.intern(strings, id_tok.name),
+                    .span = id_tok.span,
+                },
+            },
+            .literal => |lit_tok| switch (lit_tok) {
+                .number => |n| .{ .literal = .{ .number = .{ .value = n.value, .span = n.span } } },
+                .string => |s| .{
+                    .literal = .{
+                        .string = .{
+                            .value = try self.intern(strings, s.value),
+                            .span = s.span,
+                        },
+                    },
+                },
+            },
             else => {
                 self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
                 self.errorIndex = self.index - 1;
@@ -113,8 +141,9 @@ pub const Parser = struct {
         }
     }
 
-    pub fn parse(self: *Parser) !std.ArrayList(Op) {
+    pub fn parse(self: *Parser) !ParseResult {
         var ops = std.ArrayList(Op).init(self.allocator);
+        var strings = std.ArrayList([]const u8).init(self.allocator);
         errdefer ops.deinit();
 
         while (self.peek() != null) {
@@ -125,11 +154,15 @@ pub const Parser = struct {
                 .identifier => |identifier| {
                     self.lastExpectation = .{ .Pattern = "VAR be VALUE" };
                     try self.expect(.be);
-                    const value = try self.expectValue();
+                    const value = try self.expectValue(&strings);
+
+                    const owned_name = try self.allocator.dupe(u8, identifier.name);
+                    try strings.append(owned_name);
+                    const string_id = strings.items.len - 1;
 
                     try ops.append(.{
                         .Assign = .{
-                            .name = tok.identifier.name,
+                            .name = string_id,
                             .value = value,
                             .span = identifier.span,
                         },
@@ -139,7 +172,7 @@ pub const Parser = struct {
                 // yap VAR
                 .yap => |span| {
                     self.lastExpectation = .{ .Pattern = "yap VALUE" };
-                    const value = try self.expectValue();
+                    const value = try self.expectValue(&strings);
 
                     try ops.append(.{
                         .Yap = .{
@@ -151,9 +184,12 @@ pub const Parser = struct {
 
                 // throw MSG
                 .throw => |throw| {
+                    try strings.append(throw.message);
+                    const string_id = strings.items.len - 1;
+
                     try ops.append(.{
                         .Throw = .{
-                            .message = throw.message,
+                            .message = string_id,
                             .span = throw.span,
                         },
                     });
@@ -163,6 +199,9 @@ pub const Parser = struct {
             }
         }
 
-        return ops;
+        return .{
+            .ops = try ops.toOwnedSlice(),
+            .strings = try strings.toOwnedSlice(),
+        };
     }
 };
