@@ -22,6 +22,8 @@ pub const Expectation = union(enum) {
     Pattern: []const u8,
 };
 
+pub const Error = ParseError || std.mem.Allocator.Error;
+
 pub const Parser = struct {
     allocator: std.mem.Allocator,
     tokens: []const Token,
@@ -68,6 +70,11 @@ pub const Parser = struct {
     fn peek(self: *Parser) ?Token {
         if (self.index >= self.tokens.len) return null;
         return self.tokens[self.index];
+    }
+
+    fn peekTag(self: *Parser) ?std.meta.Tag(Token) {
+        const t = self.peek() orelse return null;
+        return std.meta.activeTag(t);
     }
 
     fn next(self: *Parser) ?Token {
@@ -184,49 +191,8 @@ pub const Parser = struct {
         errdefer self.deinit();
 
         while (self.peek() != null) {
-            const tok = self.next().?;
-
-            switch (tok) {
-                // IDENT assign EXPR
-                .identifier => |identifier| {
-                    self.lastExpectation = .{ .Pattern = "IDENT assign EXPR" };
-                    try self.expect(.assign);
-
-                    const value = try self.parseExpr();
-                    const name_id = try self.stringId(identifier.name);
-
-                    try self.ops.append(.{
-                        .Assign = .{
-                            .name = name_id,
-                            .value = value,
-                            .span = identifier.span,
-                        },
-                    });
-                },
-
-                // print EXPR
-                .print => |sp| {
-                    self.lastExpectation = .{ .Pattern = "print EXPR" };
-                    const value = try self.parseExpr();
-
-                    try self.ops.append(.{
-                        .Print = .{
-                            .value = value,
-                            .span = sp,
-                        },
-                    });
-                },
-
-                // throw MSG
-                .throw => |t| {
-                    const msg_id = try self.stringId(t.message);
-                    try self.ops.append(.{
-                        .Throw = .{ .message = msg_id, .span = t.span },
-                    });
-                },
-
-                else => return error.UnexpectedToken,
-            }
+            const stmt = try self.parseStatement();
+            try self.ops.append(stmt);
         }
 
         const ops = try self.ops.toOwnedSlice();
@@ -289,5 +255,138 @@ pub const Parser = struct {
         }
 
         return left;
+    }
+
+    fn parseStatement(self: *Parser) Error!Op {
+        const tok = self.next() orelse {
+            self.lastExpectation = .{ .Pattern = "STATEMENT" };
+            self.errorSpan = null;
+            return error.UnexpectedEof;
+        };
+
+        return switch (tok) {
+            // IDENT assign EXPR
+            .identifier => |identifier| blk: {
+                self.lastExpectation = .{ .Pattern = "IDENT assign EXPR" };
+                try self.expect(.assign);
+
+                const value = try self.parseExpr();
+                const name_id = try self.stringId(identifier.name);
+
+                break :blk .{
+                    .Assign = .{
+                        .name = name_id,
+                        .value = value,
+                        .span = identifier.span,
+                    },
+                };
+            },
+
+            // print EXPR
+            .print => |sp| blk: {
+                self.lastExpectation = .{ .Pattern = "print EXPR" };
+                const value = try self.parseExpr();
+
+                break :blk .{
+                    .Print = .{ .value = value, .span = sp },
+                };
+            },
+
+            // throw MSG
+            .throw => |t| blk: {
+                const msg_id = try self.stringId(t.message);
+                break :blk .{
+                    .Throw = .{ .message = msg_id, .span = t.span },
+                };
+            },
+
+            // peek EXPR pls ... [yeah ...] thx
+            .condition => |sp| try self.parseIfLike(sp),
+
+            // These should never start a statement
+            .then, .ifelse, .end => {
+                self.lastExpectation = .{ .Pattern = "STATEMENT" };
+                self.errorSpan = tok.span();
+                return error.UnexpectedToken;
+            },
+
+            else => {
+                self.lastExpectation = .{ .Pattern = "STATEMENT" };
+                self.errorSpan = tok.span();
+                return error.UnexpectedToken;
+            },
+        };
+    }
+
+    fn parseBlockUntil(self: *Parser, stop1: std.meta.Tag(Token), stop2: ?std.meta.Tag(Token)) ![]Op {
+        var list = std.ArrayList(Op).init(self.allocator);
+        errdefer {
+            for (list.items) |*op| op.deinit(self.allocator);
+            list.deinit();
+        }
+
+        while (true) {
+            const tag = self.peekTag() orelse {
+                self.lastExpectation = .{ .Token = .end };
+                self.errorSpan = null;
+                return error.UnexpectedEof;
+            };
+
+            if (tag == stop1) break;
+            if (stop2) |s2| if (tag == s2) break;
+
+            const stmt = try self.parseStatement();
+            try list.append(stmt);
+        }
+
+        return try list.toOwnedSlice();
+    }
+
+    fn parseIfLike(self: *Parser, start_span: Span) !Op {
+        // peek <expr>
+        self.lastExpectation = .{ .Pattern = "peek EXPR pls ... thx" };
+        const condition = try self.parseExpr();
+
+        // ... pls
+        try self.expect(.then);
+
+        // then block until (yeah | thx)
+        const then_ops = try self.parseBlockUntil(.ifelse, .end);
+        errdefer {
+            for (then_ops) |*op| op.deinit(self.allocator);
+            self.allocator.free(then_ops);
+        }
+
+        // if next is "yeah" => else block, otherwise must be "thx"
+        if (self.peekTag().? == .ifelse) {
+            _ = self.next(); // consume "yeah"
+
+            const else_ops = try self.parseBlockUntil(.end, null);
+            errdefer {
+                for (else_ops) |*op| op.deinit(self.allocator);
+                self.allocator.free(else_ops);
+            }
+
+            try self.expect(.end);
+
+            return .{
+                .IfElse = .{
+                    .condition = condition,
+                    .then_ops = then_ops,
+                    .else_ops = else_ops,
+                    .span = start_span, // or merge start/end if you add a helper
+                },
+            };
+        } else {
+            try self.expect(.end);
+
+            return .{
+                .If = .{
+                    .condition = condition,
+                    .then_ops = then_ops,
+                    .span = start_span, // or merge start/end
+                },
+            };
+        }
     }
 };

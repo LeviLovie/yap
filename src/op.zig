@@ -10,6 +10,8 @@ pub const OpTag = enum(u8) {
     Assign,
     Print,
     Throw,
+    If,
+    IfElse,
 };
 
 pub const Op = union(enum) {
@@ -26,14 +28,35 @@ pub const Op = union(enum) {
         message: StringID,
         span: Span,
     },
+    If: struct {
+        condition: Value,
+        then_ops: []Op,
+        span: Span,
+    },
+    IfElse: struct {
+        condition: Value,
+        then_ops: []Op,
+        else_ops: []Op,
+        span: Span,
+    },
 
     pub fn deinit(self: Op, allocator: std.mem.Allocator) void {
         switch (self) {
-            .Assign => |a| {
-                a.value.deinit(allocator);
-            },
-            .Print => |y| y.value.deinit(allocator),
+            .Assign => |a| a.value.deinit(allocator),
+            .Print => |p| p.value.deinit(allocator),
             .Throw => |_| {},
+            .If => |i| {
+                i.condition.deinit(allocator);
+                for (i.then_ops) |*op| op.deinit(allocator);
+                allocator.free(i.then_ops);
+            },
+            .IfElse => |ie| {
+                ie.condition.deinit(allocator);
+                for (ie.then_ops) |*op| op.deinit(allocator);
+                allocator.free(ie.then_ops);
+                for (ie.else_ops) |*op| op.deinit(allocator);
+                allocator.free(ie.else_ops);
+            },
         }
     }
 };

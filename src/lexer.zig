@@ -123,6 +123,18 @@ pub const Lexer = struct {
         if (std.mem.eql(u8, word, "reckons")) {
             return .{ .equals = span };
         }
+        if (std.mem.eql(u8, word, "peek")) {
+            return .{ .condition = span };
+        }
+        if (std.mem.eql(u8, word, "pls")) {
+            return .{ .then = span };
+        }
+        if (std.mem.eql(u8, word, "nah")) {
+            return .{ .ifelse = span };
+        }
+        if (std.mem.eql(u8, word, "thx")) {
+            return .{ .end = span };
+        }
         if (std.mem.eql(u8, word, "throw")) {
             self.skipWhitespace();
             const msg_start = self.mark();

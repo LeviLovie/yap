@@ -35,7 +35,9 @@ pub const Runtime = struct {
         for (ops) |op| switch (op) {
             .Assign => |a| {
                 const name = strings[a.name];
-                try self.vars.put(name, a.value);
+
+                const rhs = try self.resolve(writer, strings, a.value);
+                try self.vars.put(name, rhs);
             },
 
             .Print => |p| {
@@ -47,6 +49,20 @@ pub const Runtime = struct {
                 const msg = strings[t.message];
                 writer.print("Error: {s}\n", .{msg}) catch {};
                 return error.RuntimeError;
+            },
+
+            .If => |i| {
+                if (try self.asBool(writer, strings, i.condition)) {
+                    try self.exec(writer, strings, i.then_ops);
+                }
+            },
+
+            .IfElse => |ie| {
+                if (try self.asBool(writer, strings, ie.condition)) {
+                    try self.exec(writer, strings, ie.then_ops);
+                } else {
+                    try self.exec(writer, strings, ie.else_ops);
+                }
             },
         };
     }
@@ -114,6 +130,18 @@ pub const Runtime = struct {
                 } else {
                     return .{ .none = c.span };
                 }
+            },
+        };
+    }
+
+    fn asBool(self: *Runtime, writer: anytype, strings: []const []const u8, v: Value) !bool {
+        const rv = try self.resolve(writer, strings, v);
+        return switch (rv) {
+            .truth => true,
+            .none => false,
+            else => {
+                writer.print("if condition must accept a boolean\n", .{}) catch {};
+                return error.RuntimeError;
             },
         };
     }

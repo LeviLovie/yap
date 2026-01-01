@@ -209,6 +209,28 @@ pub fn writeOp(w: anytype, op: Op) !void {
             try writeSpan(w, t.span);
             try writeUsize(w, t.message);
         },
+        .If => |i| {
+            try writeU8(w, @intFromEnum(OpTag.If));
+            try writeValue(w, i.condition);
+            try writeU32(w, @intCast(i.then_ops.len));
+            for (i.then_ops) |then_op| {
+                try writeOp(w, then_op);
+            }
+            try writeSpan(w, i.span);
+        },
+        .IfElse => |ie| {
+            try writeU8(w, @intFromEnum(OpTag.IfElse));
+            try writeValue(w, ie.condition);
+            try writeU32(w, @intCast(ie.then_ops.len));
+            for (ie.then_ops) |then_op| {
+                try writeOp(w, then_op);
+            }
+            try writeU32(w, @intCast(ie.else_ops.len));
+            for (ie.else_ops) |else_op| {
+                try writeOp(w, else_op);
+            }
+            try writeSpan(w, ie.span);
+        },
     }
 }
 
@@ -232,6 +254,60 @@ pub fn readOp(allocator: std.mem.Allocator, r: anytype) !Op {
             const span = try readSpan(r);
             const message = try readUsize(r);
             break :blk .{ .Throw = .{ .message = message, .span = span } };
+        },
+        .If => blk: {
+            const condition = try readValue(allocator, r);
+
+            const then_count_u32 = try readU32(r);
+            const then_count: usize = @intCast(then_count_u32);
+            const then_ops = try allocator.alloc(Op, then_count);
+            errdefer {
+                for (then_ops) |*op| op.deinit(allocator);
+                allocator.free(then_ops);
+            }
+            for (then_ops) |*op| {
+                op.* = try readOp(allocator, r);
+            }
+
+            const span = try readSpan(r);
+
+            break :blk .{ .If = .{ .condition = condition, .then_ops = then_ops, .span = span } };
+        },
+        .IfElse => blk: {
+            const condition = try readValue(allocator, r);
+
+            const then_count_u32 = try readU32(r);
+            const then_count: usize = @intCast(then_count_u32);
+            const then_ops = try allocator.alloc(Op, then_count);
+            errdefer {
+                for (then_ops) |*op| op.deinit(allocator);
+                allocator.free(then_ops);
+            }
+            for (then_ops) |*op| {
+                op.* = try readOp(allocator, r);
+            }
+
+            const else_count_u32 = try readU32(r);
+            const else_count: usize = @intCast(else_count_u32);
+            const else_ops = try allocator.alloc(Op, else_count);
+            errdefer {
+                for (else_ops) |*op| op.deinit(allocator);
+                allocator.free(else_ops);
+            }
+            for (else_ops) |*op| {
+                op.* = try readOp(allocator, r);
+            }
+
+            const span = try readSpan(r);
+
+            break :blk .{
+                .IfElse = .{
+                    .condition = condition,
+                    .then_ops = then_ops,
+                    .else_ops = else_ops,
+                    .span = span,
+                },
+            };
         },
     };
 }
