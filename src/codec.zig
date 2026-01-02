@@ -117,6 +117,11 @@ pub fn writeValue(w: anytype, v: Value) !void {
             try writeValue(w, c.right.*);
             try writeSpan(w, c.span);
         },
+        .not => |n| {
+            try writeU8(w, 6);
+            try writeValue(w, n.value.*);
+            try writeSpan(w, n.span);
+        },
     }
 }
 
@@ -207,7 +212,7 @@ pub fn writeOp(w: anytype, op: Op) !void {
         .Throw => |t| {
             try writeU8(w, @intFromEnum(OpTag.Throw));
             try writeSpan(w, t.span);
-            try writeUsize(w, t.message);
+            try writeUsize(w, t.event);
         },
         .If => |i| {
             try writeU8(w, @intFromEnum(OpTag.If));
@@ -252,8 +257,8 @@ pub fn readOp(allocator: std.mem.Allocator, r: anytype) !Op {
         },
         .Throw => blk: {
             const span = try readSpan(r);
-            const message = try readUsize(r);
-            break :blk .{ .Throw = .{ .message = message, .span = span } };
+            const event = try readUsize(r);
+            break :blk .{ .Throw = .{ .event = event, .span = span } };
         },
         .If => blk: {
             const condition = try readValue(allocator, r);

@@ -23,6 +23,7 @@ pub const Token = union(enum) {
     then: Span,
     ifelse: Span,
     end: Span,
+    not: Span,
 
     pub fn span(self: Token) Span {
         return switch (self) {
@@ -34,6 +35,7 @@ pub const Token = union(enum) {
             .then => |sp| sp,
             .ifelse => |sp| sp,
             .end => |sp| sp,
+            .not => |sp| sp,
         };
     }
 };

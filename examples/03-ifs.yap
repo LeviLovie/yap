@@ -5,3 +5,9 @@ peek mode reckons "dev" pls
 nah
   yap "Mode is not dev"
 thx
+
+peek flip mode reckons "prod" pls
+  yap "Still dev mode!"
+nah
+  yap "Now in production mode"
+thx

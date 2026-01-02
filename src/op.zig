@@ -25,7 +25,7 @@ pub const Op = union(enum) {
         span: Span,
     },
     Throw: struct {
-        message: StringID,
+        event: StringID,
         span: Span,
     },
     If: struct {

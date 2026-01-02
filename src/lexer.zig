@@ -135,6 +135,9 @@ pub const Lexer = struct {
         if (std.mem.eql(u8, word, "thx")) {
             return .{ .end = span };
         }
+        if (std.mem.eql(u8, word, "flip")) {
+            return .{ .not = span };
+        }
         if (std.mem.eql(u8, word, "throw")) {
             self.skipWhitespace();
             const msg_start = self.mark();

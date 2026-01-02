@@ -27,6 +27,10 @@ pub const Value = union(enum) {
         right: *Value,
         span: Span,
     },
+    not: struct {
+        value: *Value,
+        span: Span,
+    },
 
     pub fn deinit(self: Value, allocator: std.mem.Allocator) void {
         switch (self) {
@@ -36,6 +40,10 @@ pub const Value = union(enum) {
 
                 c.right.deinit(allocator);
                 allocator.destroy(c.right);
+            },
+            .not => |n| {
+                n.value.deinit(allocator);
+                allocator.destroy(n.value);
             },
             else => {},
         }
@@ -82,6 +90,7 @@ pub const Value = union(enum) {
                 else => false,
             },
             .compare => false,
+            .not => false,
         };
     }
 };

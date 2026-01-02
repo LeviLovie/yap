@@ -227,6 +227,17 @@ pub const Parser = struct {
 
             .truth => |sp| .{ .truth = sp },
             .none => |sp| .{ .none = sp },
+            
+            .not => |sp| blk: {
+                self.lastExpectation = .{ .Pattern = "VALUE" };
+                const value = try self.parsePrimary();
+                break :blk .{
+                    .not = .{
+                        .value = try self.boxValue(value),
+                        .span = sp,
+                    },
+                };
+            },
 
             else => {
                 self.lastExpectation = .{ .Pattern = "VALUE" };
@@ -294,16 +305,15 @@ pub const Parser = struct {
 
             // throw MSG
             .throw => |t| blk: {
-                const msg_id = try self.stringId(t.message);
+                const event_id = try self.stringId(t.message);
                 break :blk .{
-                    .Throw = .{ .message = msg_id, .span = t.span },
+                    .Throw = .{ .event = event_id, .span = t.span },
                 };
             },
 
-            // peek EXPR pls ... [yeah ...] thx
+            // peek EXPR pls ... [nah ...] thx
             .condition => |sp| try self.parseIfLike(sp),
 
-            // These should never start a statement
             .then, .ifelse, .end => {
                 self.lastExpectation = .{ .Pattern = "STATEMENT" };
                 self.errorSpan = tok.span();
@@ -343,23 +353,35 @@ pub const Parser = struct {
     }
 
     fn parseIfLike(self: *Parser, start_span: Span) !Op {
-        // peek <expr>
-        self.lastExpectation = .{ .Pattern = "peek EXPR pls ... thx" };
-        const condition = try self.parseExpr();
+        self.lastExpectation = .{ .Pattern = "peek [flip] EXPR pls ... thx" };
 
-        // ... pls
+        var negate_span: ?Span = null;
+        if (self.peekTag() == .not) {
+            const tok = self.next().?;
+            negate_span = tok.not;
+        }
+
+        var condition = try self.parseExpr();
+
+        if (negate_span) |sp| {
+            condition = .{
+                .not = .{
+                    .value = try self.boxValue(condition),
+                    .span = sp,
+                },
+            };
+        }
+
         try self.expect(.then);
 
-        // then block until (yeah | thx)
         const then_ops = try self.parseBlockUntil(.ifelse, .end);
         errdefer {
             for (then_ops) |*op| op.deinit(self.allocator);
             self.allocator.free(then_ops);
         }
 
-        // if next is "yeah" => else block, otherwise must be "thx"
         if (self.peekTag().? == .ifelse) {
-            _ = self.next(); // consume "yeah"
+            _ = self.next();
 
             const else_ops = try self.parseBlockUntil(.end, null);
             errdefer {
@@ -374,7 +396,7 @@ pub const Parser = struct {
                     .condition = condition,
                     .then_ops = then_ops,
                     .else_ops = else_ops,
-                    .span = start_span, // or merge start/end if you add a helper
+                    .span = start_span,
                 },
             };
         } else {
@@ -384,7 +406,7 @@ pub const Parser = struct {
                 .If = .{
                     .condition = condition,
                     .then_ops = then_ops,
-                    .span = start_span, // or merge start/end
+                    .span = start_span,
                 },
             };
         }

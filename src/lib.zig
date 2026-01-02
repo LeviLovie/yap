@@ -63,7 +63,8 @@ pub fn runFromFile(
     var rt = Runtime.init(allocator);
     defer rt.deinit();
 
-    try rt.exec(writer, ir.strings, ir.ops);
+    try rt.loadStrings(ir.strings);
+    try rt.run(writer, ir.ops);
 }
 
 pub fn runWithWriter(
@@ -73,7 +74,9 @@ pub fn runWithWriter(
 ) !void {
     var rt = Runtime.init(allocator);
     defer rt.deinit();
-    rt.exec(writer, ir.strings, ir.ops) catch |err| {
+
+    try rt.loadStrings(ir.strings);
+    rt.run(writer, ir.ops) catch |err| {
         switch (err) {
             error.RuntimeError => {
                 return;
