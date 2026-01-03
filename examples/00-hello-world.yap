@@ -1,1 +1,1 @@
-yap "Hello, world!"
+yap "Hello, world!\n"

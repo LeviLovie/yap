@@ -1,19 +1,16 @@
+const Calculation = @import("value.zig").Calculation;
 const Identifier = @import("token.zig").Identifier;
 const Literal = @import("token.zig").Literal;
 const Span = @import("span.zig").Span;
 const StringID = @import("ir.zig").StringID;
+const Token = @import("token.zig").Token;
 const Value = @import("value.zig").Value;
 const codec = @import("codec.zig");
 const std = @import("std");
 
-pub const OpTag = enum(u8) {
-    Assign,
-    Print,
-    Throw,
-    If,
-    IfElse,
-};
-
+// NOTE: Op union tag order is part of the on-disk format.
+// Reordering union fields or inserting new ones in the middle
+// breaks compatibility and requires bumping YAPC_VERSION.
 pub const Op = union(enum) {
     Assign: struct {
         name: StringID,
@@ -60,3 +57,38 @@ pub const Op = union(enum) {
         }
     }
 };
+
+const Assoc = enum { Left, Right };
+
+const OpInfo = struct {
+    prec: u8,
+    assoc: Assoc,
+    calc: Calculation,
+};
+
+pub fn infixOp(tag: std.meta.Tag(Token)) ?OpInfo {
+    return switch (tag) {
+        .b_or  => .{ .prec = 1, .assoc = .Left, .calc = .Or },
+        .b_xor => .{ .prec = 2, .assoc = .Left, .calc = .Xor },
+        .b_and => .{ .prec = 3, .assoc = .Left, .calc = .And },
+
+        .equals => .{ .prec = 4, .assoc = .Left, .calc = .Equal },
+        .less   => .{ .prec = 4, .assoc = .Left, .calc = .Less },
+        .more   => .{ .prec = 4, .assoc = .Left, .calc = .More },
+
+        .plus     => .{ .prec = 5, .assoc = .Left,  .calc = .Plus },
+        .minus    => .{ .prec = 5, .assoc = .Left,  .calc = .Minus },
+        .multiply => .{ .prec = 6, .assoc = .Left,  .calc = .Multiply },
+        .divide   => .{ .prec = 6, .assoc = .Left,  .calc = .Divide },
+        .power    => .{ .prec = 7, .assoc = .Right, .calc = .Power },
+
+        else => null,
+    };
+}
+
+pub fn prefixCalc(tag: std.meta.Tag(Token)) ?Calculation {
+    return switch (tag) {
+        .b_not => .Not,
+        else => null,
+    };
+}

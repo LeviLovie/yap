@@ -3,7 +3,14 @@ mode be file
 num be 4.3
 
 yap 4.1
-yap "test"
+yap "\n"
+yap "test\n"
+
 yap mode
+yap "\n"
+
 yap file
+yap "\n"
+
 yap num
+yap "\n"

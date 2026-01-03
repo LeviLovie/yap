@@ -57,7 +57,7 @@ pub fn runFromFile(
     reader: anytype,
     writer: anytype,
 ) !void {
-    var ir = try Ir.deserialize(allocator, reader);
+    var ir = try Ir.deserialize(reader, allocator);
     defer ir.deinit();
 
     var rt = Runtime.init(allocator);

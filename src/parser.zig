@@ -1,9 +1,14 @@
+const Assoc = @import("op.zig").Assoc;
+const Calculation = @import("value.zig").Calculation;
 const Identifier = @import("token.zig").Identifier;
 const Op = @import("op.zig").Op;
+const OpInfo = @import("op.zig").OpInfo;
 const Span = @import("span.zig").Span;
 const StringID = @import("ir.zig").StringID;
 const Token = @import("token.zig").Token;
 const Value = @import("value.zig").Value;
+const infixOp = @import("op.zig").infixOp;
+const prefixCalc = @import("op.zig").prefixCalc;
 const std = @import("std");
 
 pub const ParseResult = struct {
@@ -115,45 +120,6 @@ pub const Parser = struct {
         };
     }
 
-    fn expectValue(self: *Parser) !Value {
-        const tok = self.next() orelse {
-            self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
-            self.errorSpan = null;
-            return error.UnexpectedEof;
-        };
-
-        return switch (tok) {
-            .identifier => |id| .{
-                .identifier = .{
-                    .name = try self.stringId(id.name),
-                    .span = id.span,
-                },
-            },
-
-            .literal => |lit| switch (lit) {
-                .number => |n| .{
-                    .literal = .{
-                        .number = .{ .value = n.value, .span = n.span },
-                    },
-                },
-                .string => |s| .{
-                    .literal = .{
-                        .string = .{
-                            .value = try self.stringId(s.value),
-                            .span = s.span,
-                        },
-                    },
-                },
-            },
-
-            else => {
-                self.lastExpectation = .{ .Pattern = "VALUE or IDENTIFIER" };
-                self.errorSpan = null;
-                return error.UnexpectedToken;
-            },
-        };
-    }
-
     fn stringId(self: *Parser, s: []const u8) !StringID {
         if (self.string_map.get(s)) |id| {
             return id;
@@ -205,7 +171,7 @@ pub const Parser = struct {
         return .{ .ops = ops, .strings = strings };
     }
 
-    fn parsePrimary(self: *Parser) !Value {
+    fn parseAtom(self: *Parser) !Value {
         const tok = self.next() orelse {
             self.lastExpectation = .{ .Pattern = "VALUE" };
             self.errorSpan = null;
@@ -214,30 +180,14 @@ pub const Parser = struct {
 
         return switch (tok) {
             .identifier => |id| .{
-                .identifier = .{
-                    .name = try self.stringId(id.name),
-                    .span = id.span,
-                },
+                .identifier = .{ .name = try self.stringId(id.name), .span = id.span },
             },
-
             .literal => |lit| switch (lit) {
                 .number => |n| .{ .literal = .{ .number = .{ .value = n.value, .span = n.span } } },
                 .string => |s| .{ .literal = .{ .string = .{ .value = try self.stringId(s.value), .span = s.span } } },
             },
-
             .truth => |sp| .{ .truth = sp },
             .none => |sp| .{ .none = sp },
-            
-            .not => |sp| blk: {
-                self.lastExpectation = .{ .Pattern = "VALUE" };
-                const value = try self.parsePrimary();
-                break :blk .{
-                    .not = .{
-                        .value = try self.boxValue(value),
-                        .span = sp,
-                    },
-                };
-            },
 
             else => {
                 self.lastExpectation = .{ .Pattern = "VALUE" };
@@ -245,27 +195,6 @@ pub const Parser = struct {
                 return error.UnexpectedToken;
             },
         };
-    }
-
-    fn parseExpr(self: *Parser) !Value {
-        var left = try self.parsePrimary();
-
-        while (true) {
-            const peeked = self.peek() orelse break;
-            if (std.meta.activeTag(peeked) != .equals) break;
-            const eq_span = self.next().?.equals;
-            const right = try self.parsePrimary();
-
-            left = .{
-                .compare = .{
-                    .left = try self.boxValue(left),
-                    .right = try self.boxValue(right),
-                    .span = eq_span,
-                },
-            };
-        }
-
-        return left;
     }
 
     fn parseStatement(self: *Parser) Error!Op {
@@ -352,43 +281,59 @@ pub const Parser = struct {
         return try list.toOwnedSlice();
     }
 
-    fn parseIfLike(self: *Parser, start_span: Span) !Op {
-        self.lastExpectation = .{ .Pattern = "peek [flip] EXPR pls ... thx" };
+    fn parsePrefix(self: *Parser) !Value {
+        const tag = self.peekTag() orelse return error.UnexpectedEof;
 
-        var negate_span: ?Span = null;
-        if (self.peekTag() == .not) {
+        if (prefixCalc(tag)) |calc| {
             const tok = self.next().?;
-            negate_span = tok.not;
+            const sp = tok.span();
+
+            const right = try self.parsePrefix();
+            return try self.makeCalc(calc, sp, right, .{ .none = sp });
         }
 
-        var condition = try self.parseExpr();
+        return self.parseAtom();
+    }
 
-        if (negate_span) |sp| {
-            condition = .{
-                .not = .{
-                    .value = try self.boxValue(condition),
-                    .span = sp,
-                },
-            };
+    fn parseExpr(self: *Parser) !Value {
+        return self.parseExpression(1);
+    }
+
+    fn parseExpression(self: *Parser, min_prec: u8) !Value {
+        var left = try self.parsePrefix();
+
+        while (true) {
+            const tag = self.peekTag() orelse break;
+            const info = infixOp(tag) orelse break;
+
+            if (info.prec < min_prec) break;
+
+            const tok = self.next().?;
+            const sp = tok.span();
+
+            const next_min =
+                if (info.assoc == .Left)
+                    info.prec + 1
+                else
+                    info.prec;
+
+            const right = try self.parseExpression(next_min);
+            left = try self.makeCalc(info.calc, sp, left, right);
         }
+
+        return left;
+    }
+
+    fn parseIfLike(self: *Parser, start_span: Span) !Op {
+        const condition = try self.parseExpr();
 
         try self.expect(.then);
 
         const then_ops = try self.parseBlockUntil(.ifelse, .end);
-        errdefer {
-            for (then_ops) |*op| op.deinit(self.allocator);
-            self.allocator.free(then_ops);
-        }
 
-        if (self.peekTag().? == .ifelse) {
+        if (self.peekTag() == .ifelse) {
             _ = self.next();
-
             const else_ops = try self.parseBlockUntil(.end, null);
-            errdefer {
-                for (else_ops) |*op| op.deinit(self.allocator);
-                self.allocator.free(else_ops);
-            }
-
             try self.expect(.end);
 
             return .{
@@ -399,16 +344,26 @@ pub const Parser = struct {
                     .span = start_span,
                 },
             };
-        } else {
-            try self.expect(.end);
-
-            return .{
-                .If = .{
-                    .condition = condition,
-                    .then_ops = then_ops,
-                    .span = start_span,
-                },
-            };
         }
+
+        try self.expect(.end);
+        return .{
+            .If = .{
+                .condition = condition,
+                .then_ops = then_ops,
+                .span = start_span,
+            },
+        };
+    }
+
+    fn makeCalc(self: *Parser, op: Calculation, sp: Span, left: Value, right: Value) !Value {
+        return .{
+            .calculate = .{
+                .left = try self.boxValue(left),
+                .right = try self.boxValue(right),
+                .operation = op,
+                .span = sp,
+            },
+        };
     }
 };

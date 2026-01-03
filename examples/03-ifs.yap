@@ -1,13 +1,13 @@
 mode be "dev"
 
 peek mode reckons "dev" pls
-  yap "Mode is dev"
+  yap "Mode is dev\n"
 nah
-  yap "Mode is not dev"
+  yap "Mode is not dev\n"
 thx
 
 peek flip mode reckons "prod" pls
-  yap "Still dev mode!"
+  yap "Still dev mode!\n"
 nah
-  yap "Now in production mode"
+  yap "Now in production mode\n"
 thx

@@ -1,8 +1,9 @@
-yap "Event is:"
+yap "Event is: "
 yap event
+yap "\n"
 
 peek event reckons "second_action" pls
-  yap "Finished!"
+  yap "Finished!\n"
   throw done
 thx
 

@@ -59,7 +59,10 @@ pub const Compiler = struct {
                 },
             },
         };
-        defer tokens.deinit();
+        defer {
+            for (tokens.items) |t| t.deinit(self.allocator);
+            tokens.deinit();
+        }
 
         var p = parser.Parser.init(self.allocator, tokens.items);
 

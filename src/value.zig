@@ -4,6 +4,34 @@ const Span = @import("span.zig").Span;
 const StringID = @import("ir.zig").StringID;
 const std = @import("std");
 
+// NOTE: Valculation enum tag order is part of the on-disk format.
+// Reordering union fields or inserting new ones in the middle
+// breaks compatibility and requires bumping YAPC_VERSION.
+pub const Calculation = enum {
+    Not,
+    Equal,
+    Less,
+    More,
+
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Power,
+
+    And,
+    Or,
+    Xor,
+};
+
+
+pub const LiteralTag = std.meta.Tag(
+    @TypeOf(@as(Value, undefined).literal)
+);
+
+// NOTE: Value union tag order is part of the on-disk format.
+// Reordering union fields or inserting new ones in the middle
+// breaks compatibility and requires bumping YAPC_VERSION.
 pub const Value = union(enum) {
     identifier: struct {
         name: StringID,
@@ -22,28 +50,21 @@ pub const Value = union(enum) {
     truth: Span,
     none: Span,
 
-    compare: struct {
+    calculate: struct {
         left: *Value,
         right: *Value,
-        span: Span,
-    },
-    not: struct {
-        value: *Value,
+        operation: Calculation,
         span: Span,
     },
 
     pub fn deinit(self: Value, allocator: std.mem.Allocator) void {
         switch (self) {
-            .compare => |c| {
+            .calculate => |c| {
                 c.left.deinit(allocator);
                 allocator.destroy(c.left);
 
                 c.right.deinit(allocator);
                 allocator.destroy(c.right);
-            },
-            .not => |n| {
-                n.value.deinit(allocator);
-                allocator.destroy(n.value);
             },
             else => {},
         }
@@ -58,7 +79,7 @@ pub const Value = union(enum) {
             },
             .truth => |sp| sp,
             .none => |sp| sp,
-            .compare => |c| c.span,
+            .calculate => |c| c.span,
         };
     }
 
@@ -81,16 +102,9 @@ pub const Value = union(enum) {
                 },
                 else => false,
             },
-            .truth => switch (other) {
-                .truth => true,
-                else => false,
-            },
-            .none => switch (other) {
-                .none => true,
-                else => false,
-            },
-            .compare => false,
-            .not => false,
+            .truth => switch (other) { .truth => true, else => false },
+            .none => switch (other) { .none => true, else => false },
+            .calculate => false,
         };
     }
 };

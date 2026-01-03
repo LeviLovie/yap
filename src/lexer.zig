@@ -59,30 +59,55 @@ pub const Lexer = struct {
         const start = self.mark();
         self.advance();
 
-        const value_start = self.index;
+        var buf = std.ArrayList(u8).init(self.allocator);
+        errdefer buf.deinit();
 
         while (!self.eof()) {
             const c = self.peek().?;
-            if (c == '"') break;
-            self.advance();
+
+            if (c == '"') {
+                self.advance();
+
+                const owned = try buf.toOwnedSlice();
+                buf.deinit();
+
+                return .{
+                    .literal = .{
+                        .string = .{
+                            .value = owned,
+                            .span = self.makeSpan(start),
+                        },
+                    },
+                };
+            }
+
+            if (c == '\\') {
+                self.advance();
+                if (self.eof()) break;
+
+                const esc = self.peek().?;
+                self.advance();
+
+                switch (esc) {
+                    'n' => try buf.append('\n'),
+                    't' => try buf.append('\t'),
+                    'r' => try buf.append('\r'),
+                    '"' => try buf.append('"'),
+                    '\\' => try buf.append('\\'),
+                    else => {
+                        self.last_error_span = self.makeSpan(start);
+                        self.last_error_char = esc;
+                        return error.InvalidCharacter;
+                    },
+                }
+            } else {
+                try buf.append(c);
+                self.advance();
+            }
         }
 
-        if (self.eof()) {
-            self.last_error_span = self.makeSpan(start);
-            return error.UnterminatedString;
-        }
-
-        const value = self.input[value_start..self.index];
-        self.advance();
-
-        return .{
-            .literal = .{
-                .string = .{
-                    .value = value,
-                    .span = self.makeSpan(start),
-                },
-            },
-        };
+        self.last_error_span = self.makeSpan(start);
+        return error.UnterminatedString;
     }
 
     fn lexNumber(self: *Lexer) !Token {
@@ -136,7 +161,43 @@ pub const Lexer = struct {
             return .{ .end = span };
         }
         if (std.mem.eql(u8, word, "flip")) {
-            return .{ .not = span };
+            return .{ .b_not = span };
+        }
+        if (std.mem.eql(u8, word, "y")) {
+            return .{ .b_and = span };
+        }
+        if (std.mem.eql(u8, word, "either")) {
+            return .{ .b_or = span };
+        }
+        if (std.mem.eql(u8, word, "neither")) {
+            return .{ .b_xor = span };
+        }
+        if (std.mem.eql(u8, word, "add")) {
+            return .{ .plus = span };
+        }
+        if (std.mem.eql(u8, word, "sub")) {
+            return .{ .minus = span };
+        }
+        if (std.mem.eql(u8, word, "mul")) {
+            return .{ .multiply = span };
+        }
+        if (std.mem.eql(u8, word, "div")) {
+            return .{ .divide = span };
+        }
+        if (std.mem.eql(u8, word, "pow")) {
+            return .{ .power = span };
+        }
+        if (std.mem.eql(u8, word, "smaller")) {
+            return .{ .less = span };
+        }
+        if (std.mem.eql(u8, word, "bigger")) {
+            return .{ .more = span };
+        }
+        if (std.mem.eql(u8, word, "smaller")) {
+            return .{ .less = span };
+        }
+        if (std.mem.eql(u8, word, "bigger")) {
+            return .{ .more = span };
         }
         if (std.mem.eql(u8, word, "throw")) {
             self.skipWhitespace();

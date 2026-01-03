@@ -64,8 +64,6 @@ pub const Runtime = struct {
         try self.upcoming_events.append("entry");
 
         while (self.upcoming_events.items.len > 0) {
-            std.time.sleep(2_000_000_00);
-
             const event = self.upcoming_events.orderedRemove(0);
             const event_id = try self.loadString(event);
             const span = Span{ .start = 0, .end = 0, .line = 0, .column = 0 };
@@ -180,18 +178,18 @@ pub const Runtime = struct {
         switch (v) {
             .literal => |lit| switch (lit) {
                 .number => |n| {
-                    try writer.print("{d}\n", .{n.value});
+                    try writer.print("{d}", .{n.value});
                 },
                 .string => |s| {
-                    try writer.print("{s}\n", .{self.getString(s.value)});
+                    try writer.print("{s}", .{self.getString(s.value)});
                 },
             },
 
-            .truth => |_| try writer.print("yeah\n", .{}),
-            .none => |_| try writer.print("nope\n", .{}),
+            .truth => |_| try writer.print("yeah", .{}),
+            .none => |_| try writer.print("nope", .{}),
 
             else => {
-                try writer.print("cannot print value\n", .{});
+                try writer.print("{{error printing value}}", .{});
                 return error.RuntimeError;
             },
         }
@@ -218,9 +216,12 @@ pub const Runtime = struct {
         return self.dyn_strings.items[@intCast(id)];
     }
 
-    fn resolve(self: *Runtime, writer: anytype, strings: []const []const u8, v: Value) !Value {
+    fn resolve(self: *Runtime, writer: anytype, strings: []const []const u8, v: Value) RuntimeError!Value {
         return switch (v) {
             .literal => v,
+            .truth => v,
+            .none => v,
+
             .identifier => |id| {
                 const name = strings[id.name];
                 const stored = self.vars.get(name) orelse {
@@ -229,29 +230,91 @@ pub const Runtime = struct {
                 };
                 return try self.resolve(writer, strings, stored);
             },
-            .truth => v,
-            .none => v,
-            .compare => |c| {
-                const left_val = try self.resolve(writer, strings, c.left.*);
-                const right_val = try self.resolve(writer, strings, c.right.*);
 
-                if (left_val.equals(right_val)) {
-                    return .{ .truth = c.span };
-                } else {
-                    return .{ .none = c.span };
+            .calculate => |c| {
+                const op = c.operation;
+
+                if (op == .Not) {
+                    const b = try self.expectBool(writer, strings, c.left.*);
+                    return if (b) .{ .none = c.span } else .{ .truth = c.span };
                 }
-            },
-            .not => |n| {
-                const inner = try self.resolve(writer, strings, n.value.*);
-                return switch (inner) {
-                    .truth => .{ .none = n.span },
-                    .none => .{ .truth = n.span },
-                    else => {
-                        writer.print("not operator requires a boolean\n", .{}) catch {};
-                        return error.RuntimeError;
-                    },
-                };
+
+                if (op == .And or op == .Or or op == .Xor) {
+                    const a = try self.expectBool(writer, strings, c.left.*);
+                    const b = try self.expectBool(writer, strings, c.right.*);
+                    const out = switch (op) {
+                        .And => a and b,
+                        .Or => a or b,
+                        .Xor => (a != b),
+                        else => unreachable,
+                    };
+                    return if (out) .{ .truth = c.span } else .{ .none = c.span };
+                }
+
+                if (op == .Plus or op == .Minus or op == .Multiply or op == .Divide or op == .Power) {
+                    const a = try self.expectNumber(writer, strings, c.left.*);
+                    const b = try self.expectNumber(writer, strings, c.right.*);
+
+                    const res: f64 = switch (op) {
+                        .Plus => a + b,
+                        .Minus => a - b,
+                        .Multiply => a * b,
+                        .Divide => a / b,
+                        .Power => std.math.pow(f64, a, b),
+                        else => unreachable,
+                    };
+
+                    return .{ .literal = .{ .number = .{ .value = res, .span = c.span } } };
+                }
+
+                if (op == .Equal) {
+                    const left_val = try self.resolve(writer, strings, c.left.*);
+                    const right_val = try self.resolve(writer, strings, c.right.*);
+                    return if (left_val.equals(right_val))
+                        .{ .truth = c.span }
+                    else
+                        .{ .none = c.span };
+                }
+
+                if (op == .Less or op == .More) {
+                    const a = try self.expectNumber(writer, strings, c.left.*);
+                    const b = try self.expectNumber(writer, strings, c.right.*);
+                    const out = if (op == .Less) (a < b) else (a > b);
+                    return if (out) .{ .truth = c.span } else .{ .none = c.span };
+                }
+
+                writer.print("unknown calculation op\n", .{}) catch {};
+                return error.RuntimeError;
             },
         };
     }
-};
+
+    fn expectNumber(self: *Runtime, writer: anytype, strings: []const []const u8, v: Value) !f64 {
+        const r = try self.resolve(writer, strings, v);
+        return switch (r) {
+            .literal => |lit| switch (lit) {
+                .number => |n| n.value,
+                else => {
+                    writer.print("expected number\n", .{}) catch {};
+                    return error.RuntimeError;
+                },
+            },
+            else => {
+                writer.print("expected number\n", .{}) catch {};
+                    return error.RuntimeError;
+                },
+            };
+        }
+
+        fn expectBool(self: *Runtime, writer: anytype, strings: []const []const u8, v: Value) !bool {
+            const r = try self.resolve(writer, strings, v);
+            return switch (r) {
+                .truth => true,
+                .none => false,
+                else => {
+                    writer.print("expected boolean\n", .{}) catch {};
+                    return error.RuntimeError;
+                },
+            };
+        }
+    };
