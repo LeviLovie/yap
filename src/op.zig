@@ -36,12 +36,17 @@ pub const Op = union(enum) {
         else_ops: []Op,
         span: Span,
     },
+    Mem: struct {
+        event: StringID,
+        span: Span,
+    },
 
     pub fn deinit(self: Op, allocator: std.mem.Allocator) void {
         switch (self) {
             .Assign => |a| a.value.deinit(allocator),
             .Print => |p| p.value.deinit(allocator),
             .Throw => |_| {},
+            .Mem => |_| {},
             .If => |i| {
                 i.condition.deinit(allocator);
                 for (i.then_ops) |*op| op.deinit(allocator);

@@ -16,7 +16,11 @@ pub const Token = union(enum) {
     none: Span,
     print: Span,
     throw: struct {
-        message: []const u8,
+        event: []const u8,
+        span: Span,
+    },
+    mem: struct {
+        event: []const u8,
         span: Span,
     },
     truth: Span,
@@ -59,6 +63,7 @@ pub const Token = union(enum) {
             => |sp| sp,
 
             .throw => |t| t.span,
+            .mem => |m| m.span,
         };
     }
 };

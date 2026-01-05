@@ -7,7 +7,7 @@ const Value = @import("value.zig").Value;
 const std = @import("std");
 
 pub const YAPC_MAGIC: []const u8 = "YAPC";
-pub const YAPC_VERSION: u32 = 1;
+pub const YAPC_VERSION: u32 = 2;
 
 pub const CodecError = error{
     InvalidFormat,
@@ -173,6 +173,10 @@ pub fn writeOp(w: anytype, op: Op) !void {
             try writeSpan(w, t.span);
             try writeUsize(w, t.event);
         },
+        .Mem => |m| {
+            try writeSpan(w, m.span);
+            try writeUsize(w, m.event);
+        },
         .If => |i| {
             try writeValue(w, i.condition);
             try writeU32(w, @intCast(i.then_ops.len));
@@ -209,6 +213,11 @@ pub fn readOp(r: anytype, allocator: std.mem.Allocator) !Op {
             const span = try readSpan(r);
             const event = try readUsize(r);
             break :blk .{ .Throw = .{ .event = event, .span = span } };
+        },
+        .Mem => blk: {
+            const span = try readSpan(r);
+            const event = try readUsize(r);
+            break :blk .{ .Mem = .{ .event = event, .span = span } };
         },
         .If => blk: {
             const condition = try readValue(r, allocator);

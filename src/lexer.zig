@@ -206,7 +206,19 @@ pub const Lexer = struct {
 
             return .{
                 .throw = .{
-                    .message = msg,
+                    .event = msg,
+                    .span = self.makeSpan(msg_start),
+                },
+            };
+        }
+        if (std.mem.eql(u8, word, "mem")) {
+            self.skipWhitespace();
+            const msg_start = self.mark();
+            const msg = self.readLine();
+
+            return .{
+                .mem = .{
+                    .event = msg,
                     .span = self.makeSpan(msg_start),
                 },
             };

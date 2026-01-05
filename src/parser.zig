@@ -232,11 +232,19 @@ pub const Parser = struct {
                 };
             },
 
-            // throw MSG
+            // throw EVENT
             .throw => |t| blk: {
-                const event_id = try self.stringId(t.message);
+                const event_id = try self.stringId(t.event);
                 break :blk .{
                     .Throw = .{ .event = event_id, .span = t.span },
+                };
+            },
+
+            // mem EVENT
+            .mem => |t| blk: {
+                const event_id = try self.stringId(t.event);
+                break :blk .{
+                    .Mem = .{ .event = event_id, .span = t.span },
                 };
             },
 
